@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="es-CL">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reembolsos Isapre</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --card:#ffffff; --ink:#1c2530; --muted:#5f6b7a; --line:#e1e6eb;
+    --primary:#2563eb; --primary-dark:#1d4ed8; --primary-light:#eaf0fe;
+    --green:#16a34a; --green-bg:#e8f7ed;
+    --amber:#d97706; --amber-bg:#fef3e2;
+    --red:#dc2626; --red-bg:#fdecec;
+    --purple:#7c3aed; --purple-bg:#f1eafd;
+    --gray-bg:#eef1f4;
+    --radius:12px;
+    --shadow:0 1px 3px rgba(20,30,45,.08), 0 1px 2px rgba(20,30,45,.06);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  header{background:var(--card);border-bottom:1px solid var(--line);padding:18px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;position:sticky;top:0;z-index:20;}
+  header h1{font-size:19px;margin:0;display:flex;align-items:center;gap:10px;}
+  header h1 .tag{font-size:11px;font-weight:600;background:var(--primary-light);color:var(--primary-dark);padding:3px 8px;border-radius:20px;}
+  .header-actions{display:flex;gap:8px;flex-wrap:wrap;}
+  main{max-width:1180px;margin:0 auto;padding:20px 24px 60px;}
+
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:9px;padding:9px 14px;font-size:13.5px;font-weight:600;display:inline-flex;align-items:center;gap:6px;transition:.15s;}
+  .btn-primary{background:var(--primary);color:#fff;}
+  .btn-primary:hover{background:var(--primary-dark);}
+  .btn-secondary{background:var(--gray-bg);color:var(--ink);}
+  .btn-secondary:hover{background:#e2e7ec;}
+  .btn-ghost{background:transparent;color:var(--muted);padding:6px 10px;}
+  .btn-ghost:hover{background:var(--gray-bg);}
+  .btn-danger{background:var(--red-bg);color:var(--red);}
+  .btn-danger:hover{background:#fbdada;}
+  .btn-sm{padding:6px 10px;font-size:12.5px;}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px;}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;}
+  .stat .n{font-size:22px;font-weight:700;}
+  .stat .l{font-size:12px;color:var(--muted);margin-top:2px;}
+
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;}
+  .toolbar select, .toolbar input[type=text]{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;background:#fff;color:var(--ink);}
+  .toolbar input[type=text]{flex:1;min-width:160px;}
+  .spacer{flex:1;}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;}
+  .card .thumbs{display:flex;height:130px;background:#eef1f4;}
+  .card .thumbs img{flex:1;object-fit:cover;height:100%;width:100%;border-right:1px solid #fff;}
+  .card .thumbs .more{flex:0 0 46px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted);background:#e4e8ec;}
+  .card .thumbs .empty{flex:1;display:flex;align-items:center;justify-content:center;color:#a7b0ba;font-size:12px;}
+  .card .body{padding:14px 14px 12px;display:flex;flex-direction:column;gap:6px;flex:1;}
+  .card .top-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
+  .card .desc{font-weight:600;font-size:14.5px;line-height:1.3;}
+  .card .meta{font-size:12.5px;color:var(--muted);}
+  .card .amount{font-size:15px;font-weight:700;margin-top:2px;}
+  .card .foot{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-top:1px solid var(--line);}
+
+  .badge{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;white-space:nowrap;}
+  .badge.pendiente{background:var(--gray-bg);color:var(--muted);}
+  .badge.lista{background:var(--purple-bg);color:var(--purple);}
+  .badge.enviada{background:var(--amber-bg);color:var(--amber);}
+  .badge.en_revision{background:var(--amber-bg);color:var(--amber);}
+  .badge.aprobada{background:var(--green-bg);color:var(--green);}
+  .badge.rechazada{background:var(--red-bg);color:var(--red);}
+  .badge.pagada{background:var(--green-bg);color:var(--green);}
+
+  .empty-state{text-align:center;padding:60px 20px;color:var(--muted);}
+  .empty-state .big{font-size:40px;margin-bottom:10px;}
+
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(20,25,35,.5);display:none;align-items:flex-start;justify-content:center;padding:30px 16px;overflow:auto;z-index:100;}
+  .overlay.show{display:flex;}
+  .modal{background:#fff;border-radius:14px;max-width:560px;width:100%;padding:22px;box-shadow:0 20px 50px rgba(0,0,0,.25);margin-bottom:40px;}
+  .modal h2{margin:0 0 16px;font-size:17px;}
+  .modal .field{margin-bottom:13px;}
+  .modal label{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:5px;}
+  .modal input, .modal select, .modal textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:13.5px;font-family:inherit;background:#fff;color:var(--ink);}
+  .modal textarea{resize:vertical;min-height:60px;}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;}
+  .drop{border:2px dashed var(--line);border-radius:10px;padding:16px;text-align:center;color:var(--muted);font-size:13px;cursor:pointer;background:#fafbfc;}
+  .drop:hover{border-color:var(--primary);color:var(--primary-dark);}
+  .preview-thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+  .preview-thumbs .pt{position:relative;width:64px;height:64px;border-radius:8px;overflow:hidden;border:1px solid var(--line);}
+  .preview-thumbs .pt img{width:100%;height:100%;object-fit:cover;}
+  .preview-thumbs .pt .rm{position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;line-height:1;padding:0;}
+
+  .detail-photos{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;}
+  .detail-photos img{width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;}
+  .timeline{list-style:none;padding:0;margin:10px 0 0;border-left:2px solid var(--line);}
+  .timeline li{padding:0 0 12px 14px;position:relative;font-size:12.5px;}
+  .timeline li::before{content:"";position:absolute;left:-6px;top:3px;width:9px;height:9px;border-radius:50%;background:var(--primary);}
+  .timeline li .d{color:var(--muted);font-size:11px;}
+
+  .checkbox-row{display:flex;align-items:center;gap:8px;}
+  .checkbox-row input{width:auto;}
+
+  .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;align-items:center;justify-content:center;z-index:200;padding:20px;}
+  .lightbox.show{display:flex;}
+  .lightbox img{max-width:100%;max-height:100%;border-radius:8px;}
+
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1c2530;color:#fff;padding:11px 18px;border-radius:9px;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:300;opacity:0;pointer-events:none;transition:.25s;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px);}
+
+  .banner{background:var(--primary-light);color:var(--primary-dark);border:1px solid #c7d9fc;border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:16px;line-height:1.5;}
+  .footer-note{color:var(--muted);font-size:11.5px;text-align:center;margin-top:30px;line-height:1.6;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🩺 Reembolsos Isapre <span class="tag">local · privado</span></h1>
+  <div class="header-actions">
+    <button class="btn-secondary btn-sm" id="btnBackup">⬇️ Respaldo</button>
+    <button class="btn-secondary btn-sm" id="btnRestore">⬆️ Restaurar</button>
+    <input type="file" id="restoreInput" accept="application/json" style="display:none;">
+    <button class="btn-primary" id="btnNew">+ Nueva prestación</button>
+  </div>
+</header>
+
+<main>
+  <div class="banner" id="storageBanner"></div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="toolbar">
+    <select id="filterEstado">
+      <option value="">Todos los estados</option>
+      <option value="pendiente">Pendiente</option>
+      <option value="lista">Lista para enviar</option>
+      <option value="enviada">Enviada</option>
+      <option value="en_revision">En revisión</option>
+      <option value="aprobada">Aprobada</option>
+      <option value="rechazada">Rechazada</option>
+      <option value="pagada">Pagada</option>
+    </select>
+    <select id="filterCategoria">
+      <option value="">Todas las categorías</option>
+    </select>
+    <input type="text" id="filterTexto" placeholder="Buscar por prestador, N° boleta o descripción...">
+    <div class="spacer"></div>
+    <button class="btn-secondary btn-sm" id="btnSelectMode">Seleccionar</button>
+    <button class="btn-primary btn-sm" id="btnExportZip" disabled>📦 Preparar carpeta para isapre (0)</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+  <div class="empty-state" id="emptyState" style="display:none;">
+    <div class="big">📄</div>
+    <div>Aún no registras prestaciones.</div>
+    <div>Usa "+ Nueva prestación" para subir la foto de tu primera boleta.</div>
+  </div>
+
+  <div class="footer-note">
+    Todos tus datos (incluidas las fotos) se guardan solo en este navegador, en este computador o teléfono — nadie más los ve ni se suben a internet.<br>
+    Recuerda usar el botón "Respaldo" de vez en cuando para no perder tu información.
+  </div>
+</main>
+
+<!-- Modal: nueva/editar prestación -->
+<div class="overlay" id="formOverlay">
+  <div class="modal">
+    <h2 id="formTitle">Nueva prestación</h2>
+    <form id="prestacionForm">
+      <input type="hidden" id="fId">
+      <div class="row2">
+        <div class="field">
+          <label>Fecha de la prestación</label>
+          <input type="date" id="fFecha" required>
+        </div>
+        <div class="field">
+          <label>Categoría</label>
+          <select id="fCategoria">
+            <option>Consulta médica</option>
+            <option>Examen</option>
+            <option>Cirugía</option>
+            <option>Medicamentos</option>
+            <option>Kinesiología / Terapia</option>
+            <option>Dental</option>
+            <option>Urgencia</option>
+            <option>Otro</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Descripción del procedimiento</label>
+        <input type="text" id="fDescripcion" placeholder="Ej: Consulta traumatólogo, radiografía rodilla..." required>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Prestador / clínica / médico</label>
+          <input type="text" id="fPrestador" placeholder="Ej: Clínica Las Condes">
+        </div>
+        <div class="field">
+          <label>N° de boleta / folio</label>
+          <input type="text" id="fBoleta" placeholder="Ej: 0001234">
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Monto pagado (CLP)</label>
+          <input type="number" id="fMonto" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Estado actual</label>
+          <select id="fEstado">
+            <option value="pendiente">Pendiente</option>
+            <option value="lista">Lista para enviar</option>
+            <option value="enviada">Enviada a isapre</option>
+            <option value="en_revision">En revisión</option>
+            <option value="aprobada">Aprobada</option>
+            <option value="rechazada">Rechazada</option>
+            <option value="pagada">Pagada</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Fotos de la boleta / orden / informe</label>
+        <div class="drop" id="dropZone">📷 Toca para tomar foto o elegir imágenes (puedes agregar varias)</div>
+        <input type="file" id="fFotos" accept="image/*" multiple capture="environment" style="display:none;">
+        <div class="preview-thumbs" id="previewThumbs"></div>
+      </div>
+      <div class="field">
+        <label>Nota inicial (opcional)</label>
+        <textarea id="fNota" placeholder="Ej: Falta orden médica del especialista"></textarea>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn-secondary" id="btnCancelForm">Cancelar</button>
+        <button type="submit" class="btn-primary" id="btnSaveForm">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: detalle / seguimiento -->
+<div class="overlay" id="detailOverlay">
+  <div class="modal" style="max-width:600px;">
+    <h2 id="detailTitle">Detalle</h2>
+    <div id="detailBody"></div>
+    <div class="actions">
+      <button type="button" class="btn-danger" id="btnDelete">Eliminar</button>
+      <div class="spacer"></div>
+      <button type="button" class="btn-secondary" id="btnEdit">Editar datos</button>
+      <button type="button" class="btn-primary" id="btnCloseDetail">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="lightbox" id="lightbox"><img id="lightboxImg"></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+(function(){
+"use strict";
+
+/* ---------------- IndexedDB helper ---------------- */
+const DB_NAME = "reembolsos_isapre_db";
+const STORE = "prestaciones";
+let db;
+
+function openDB(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = (e)=>{
+      const d = e.target.result;
+      if(!d.objectStoreNames.contains(STORE)){
+        d.createObjectStore(STORE,{keyPath:"id"});
+      }
+    };
+    req.onsuccess = (e)=>resolve(e.target.result);
+    req.onerror = (e)=>reject(e);
+  });
+}
+function txStore(mode){ return db.transaction(STORE, mode).objectStore(STORE); }
+function dbGetAll(){
+  return new Promise((resolve,reject)=>{
+    const req = txStore("readonly").getAll();
+    req.onsuccess = ()=>resolve(req.result || []);
+    req.onerror = (e)=>reject(e);
+  });
+}
+function dbPut(item){
+  return new Promise((resolve,reject)=>{
+    const req = txStore("readwrite").put(item);
+    req.onsuccess = ()=>resolve();
+    req.onerror = (e)=>reject(e);
+  });
+}
+function dbDelete(id){
+  return new Promise((resolve,reject)=>{
+    const req = txStore("readwrite").delete(id);
+    req.onsuccess = ()=>resolve();
+    req.onerror = (e)=>reject(e);
+  });
+}
+
+/* ---------------- state ---------------- */
+let items = [];           // all prestaciones in memory (mirrors IndexedDB)
+let pendingFotos = [];     // {name, dataUrl} for the form currently open
+let editingId = null;
+let selectMode = false;
+let selectedIds = new Set();
+let storageUsable = true;
+
+const ESTADOS = {
+  pendiente:{label:"Pendiente", cls:"pendiente"},
+  lista:{label:"Lista para enviar", cls:"lista"},
+  enviada:{label:"Enviada", cls:"enviada"},
+  en_revision:{label:"En revisión", cls:"en_revision"},
+  aprobada:{label:"Aprobada", cls:"aprobada"},
+  rechazada:{label:"Rechazada", cls:"rechazada"},
+  pagada:{label:"Pagada", cls:"pagada"}
+};
+
+const fmtCLP = (n)=> new Intl.NumberFormat("es-CL",{style:"currency",currency:"CLP",maximumFractionDigits:0}).format(n||0);
+const fmtDate = (iso)=>{ if(!iso) return "-"; const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"}); };
+const fmtDateTime = (iso)=>{ const d=new Date(iso); return d.toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"}) + " " + d.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"}); };
+const uid = ()=> (crypto.randomUUID ? crypto.randomUUID() : "id-"+Date.now()+"-"+Math.random().toString(16).slice(2));
+
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=>t.classList.remove("show"), 2600);
+}
+
+/* ---------------- image resize (keeps storage light) ---------------- */
+function resizeImage(file, maxW){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      const img = new Image();
+      img.onload = ()=>{
+        let {width,height} = img;
+        if(width > maxW){ height = Math.round(height * (maxW/width)); width = maxW; }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d").drawImage(img,0,0,width,height);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------------- render ---------------- */
+function computeStats(){
+  const total = items.length;
+  const pendientesEnvio = items.filter(i=>i.estado==="pendiente"||i.estado==="lista").length;
+  const enProceso = items.filter(i=>i.estado==="enviada"||i.estado==="en_revision").length;
+  const totalReembolsado = items.filter(i=>i.estado==="pagada").reduce((s,i)=>s+(Number(i.montoReembolsado)||Number(i.monto)||0),0);
+  const totalPagadoBoletas = items.reduce((s,i)=>s+(Number(i.monto)||0),0);
+  return {total,pendientesEnvio,enProceso,totalReembolsado,totalPagadoBoletas};
+}
+
+function renderStats(){
+  const s = computeStats();
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><div class="n">${s.total}</div><div class="l">Prestaciones registradas</div></div>
+    <div class="stat"><div class="n">${s.pendientesEnvio}</div><div class="l">Pendientes de enviar</div></div>
+    <div class="stat"><div class="n">${s.enProceso}</div><div class="l">En proceso con la isapre</div></div>
+    <div class="stat"><div class="n">${fmtCLP(s.totalReembolsado)}</div><div class="l">Reembolsado (pagado)</div></div>
+    <div class="stat"><div class="n">${fmtCLP(s.totalPagadoBoletas)}</div><div class="l">Total gastado en boletas</div></div>
+  `;
+}
+
+function refreshCategoriaFilter(){
+  const sel = document.getElementById("filterCategoria");
+  const current = sel.value;
+  const cats = Array.from(new Set(items.map(i=>i.categoria).filter(Boolean))).sort();
+  sel.innerHTML = '<option value="">Todas las categorías</option>' + cats.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+  sel.value = current;
+}
+
+function escapeHtml(s){
+  return String(s==null?"":s).replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+}
+
+function filteredItems(){
+  const estado = document.getElementById("filterEstado").value;
+  const categoria = document.getElementById("filterCategoria").value;
+  const texto = document.getElementById("filterTexto").value.trim().toLowerCase();
+  return items
+    .filter(i => !estado || i.estado===estado)
+    .filter(i => !categoria || i.categoria===categoria)
+    .filter(i => !texto || [i.prestador,i.numeroBoleta,i.descripcion].join(" ").toLowerCase().includes(texto))
+    .sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||"") || (b.creado||0)-(a.creado||0));
+}
+
+function renderGrid(){
+  const list = filteredItems();
+  const grid = document.getElementById("grid");
+  document.getElementById("emptyState").style.display = (items.length===0) ? "block" : "none";
+  grid.style.display = (items.length===0) ? "none" : "grid";
+
+  grid.innerHTML = list.map(item=>{
+    const est = ESTADOS[item.estado] || ESTADOS.pendiente;
+    const fotos = item.fotos || [];
+    let thumbsHtml;
+    if(fotos.length===0){
+      thumbsHtml = `<div class="empty">Sin foto</div>`;
+    } else {
+      const shown = fotos.slice(0,3);
+      thumbsHtml = shown.map(f=>`<img src="${f.dataUrl}" loading="lazy">`).join("");
+      if(fotos.length>3) thumbsHtml += `<div class="more">+${fotos.length-3}</div>`;
+    }
+    const checkbox = selectMode ? `<input type="checkbox" class="sel-check" data-id="${item.id}" ${selectedIds.has(item.id)?"checked":""} style="position:absolute;top:8px;left:8px;width:18px;height:18px;z-index:2;">` : "";
+    return `
+      <div class="card" style="position:relative;" data-id="${item.id}">
+        ${checkbox}
+        <div class="thumbs">${thumbsHtml}</div>
+        <div class="body">
+          <div class="top-row">
+            <div class="desc">${escapeHtml(item.descripcion||"(sin descripción)")}</div>
+            <span class="badge ${est.cls}">${est.label}</span>
+          </div>
+          <div class="meta">${escapeHtml(item.categoria||"Otro")} · ${fmtDate(item.fecha)}</div>
+          <div class="meta">${escapeHtml(item.prestador||"Prestador no indicado")}${item.numeroBoleta?(" · N° "+escapeHtml(item.numeroBoleta)):""}</div>
+          <div class="amount">${fmtCLP(item.monto)}</div>
+        </div>
+        <div class="foot">
+          <button class="btn-ghost btn-sm open-detail" data-id="${item.id}">Ver / seguimiento →</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  grid.querySelectorAll(".open-detail").forEach(btn=>{
+    btn.addEventListener("click", ()=> openDetail(btn.dataset.id));
+  });
+  grid.querySelectorAll(".sel-check").forEach(cb=>{
+    cb.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const id = cb.dataset.id;
+      if(cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+      updateExportButton();
+    });
+  });
+  grid.querySelectorAll(".card").forEach(card=>{
+    card.addEventListener("click", (e)=>{
+      if(selectMode && !e.target.classList.contains("open-detail")){
+        const cb = card.querySelector(".sel-check");
+        if(cb && e.target!==cb){ cb.checked = !cb.checked; cb.dispatchEvent(new Event("click",{bubbles:true})); }
+      }
+    });
+  });
+}
+
+function updateExportButton(){
+  const btn = document.getElementById("btnExportZip");
+  btn.textContent = `📦 Preparar carpeta para isapre (${selectedIds.size})`;
+  btn.disabled = selectedIds.size===0;
+}
+
+function renderAll(){
+  renderStats();
+  refreshCategoriaFilter();
+  renderGrid();
+  updateExportButton();
+}
+
+/* ---------------- form (nueva / editar) ---------------- */
+function openForm(item){
+  editingId = item ? item.id : null;
+  pendingFotos = item ? (item.fotos||[]).slice() : [];
+  document.getElementById("formTitle").textContent = item ? "Editar prestación" : "Nueva prestación";
+  document.getElementById("fId").value = item ? item.id : "";
+  document.getElementById("fFecha").value = item ? item.fecha : new Date().toISOString().slice(0,10);
+  document.getElementById("fCategoria").value = item ? item.categoria : "Consulta médica";
+  document.getElementById("fDescripcion").value = item ? item.descripcion : "";
+  document.getElementById("fPrestador").value = item ? item.prestador : "";
+  document.getElementById("fBoleta").value = item ? item.numeroBoleta : "";
+  document.getElementById("fMonto").value = item ? item.monto : "";
+  document.getElementById("fEstado").value = item ? item.estado : "pendiente";
+  document.getElementById("fNota").value = "";
+  renderPreviewThumbs();
+  document.getElementById("formOverlay").classList.add("show");
+}
+function closeForm(){
+  document.getElementById("formOverlay").classList.remove("show");
+  document.getElementById("prestacionForm").reset();
+  pendingFotos = [];
+  editingId = null;
+}
+function renderPreviewThumbs(){
+  const wrap = document.getElementById("previewThumbs");
+  wrap.innerHTML = pendingFotos.map((f,idx)=>`
+    <div class="pt"><img src="${f.dataUrl}"><button type="button" class="rm" data-idx="${idx}">✕</button></div>
+  `).join("");
+  wrap.querySelectorAll(".rm").forEach(b=>{
+    b.addEventListener("click", ()=>{ pendingFotos.splice(Number(b.dataset.idx),1); renderPreviewThumbs(); });
+  });
+}
+
+async function handleFiles(fileList){
+  const files = Array.from(fileList);
+  for(const file of files){
+    if(!file.type.startsWith("image/")) continue;
+    try{
+      const dataUrl = await resizeImage(file, 1600);
+      pendingFotos.push({name:file.name, dataUrl});
+    }catch(err){ console.error("No se pudo procesar imagen", err); }
+  }
+  renderPreviewThumbs();
+}
+
+/* ---------------- detail / seguimiento ---------------- */
+let detailId = null;
+function openDetail(id){
+  detailId = id;
+  const item = items.find(i=>i.id===id);
+  if(!item) return;
+  const est = ESTADOS[item.estado] || ESTADOS.pendiente;
+  document.getElementById("detailTitle").textContent = item.descripcion || "Detalle de prestación";
+  const fotosHtml = (item.fotos||[]).map(f=>`<img src="${f.dataUrl}" class="lb-open" data-src="${f.dataUrl}">`).join("") || "<div style='color:#999;font-size:12.5px;'>Sin fotos adjuntas</div>";
+  const historial = (item.historial||[]).slice().reverse();
+  const historialHtml = historial.length ? `<ul class="timeline">${historial.map(h=>`<li><div class="d">${fmtDateTime(h.fecha)}</div>${escapeHtml(h.texto)}</li>`).join("")}</ul>` : "<div style='color:#999;font-size:12.5px;margin-top:6px;'>Sin movimientos registrados aún.</div>";
+
+  document.getElementById("detailBody").innerHTML = `
+    <div class="meta" style="margin-bottom:4px;">${escapeHtml(item.categoria)} · ${fmtDate(item.fecha)} · ${escapeHtml(item.prestador||"-")}</div>
+    <div class="meta" style="margin-bottom:10px;">N° boleta: ${escapeHtml(item.numeroBoleta||"-")} · Monto boleta: <b>${fmtCLP(item.monto)}</b></div>
+    <div class="detail-photos">${fotosHtml}</div>
+
+    <div class="field" style="margin-top:14px;">
+      <label>Cambiar estado</label>
+      <select id="dEstadoSelect">
+        ${Object.entries(ESTADOS).map(([k,v])=>`<option value="${k}" ${item.estado===k?"selected":""}>${v.label}</option>`).join("")}
+      </select>
+    </div>
+    <div class="field" id="montoReembolsadoField" style="display:${item.estado==='pagada'?'block':'none'};">
+      <label>Monto efectivamente reembolsado (CLP)</label>
+      <input type="number" id="dMontoReembolsado" min="0" step="1" value="${item.montoReembolsado||""}">
+    </div>
+    <div class="field">
+      <label>Agregar nota de seguimiento</label>
+      <textarea id="dNota" placeholder="Ej: Llamé a la isapre, dicen que está en revisión desde el 03/09"></textarea>
+    </div>
+    <button type="button" class="btn-secondary btn-sm" id="btnAddNote">+ Guardar cambio / nota</button>
+
+    <div style="margin-top:16px;">
+      <label style="display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:5px;">Historial de seguimiento</label>
+      ${historialHtml}
+    </div>
+  `;
+
+  document.getElementById("dEstadoSelect").addEventListener("change", (e)=>{
+    document.getElementById("montoReembolsadoField").style.display = e.target.value==="pagada" ? "block" : "none";
+  });
+  document.getElementById("btnAddNote").addEventListener("click", async ()=>{
+    const nuevoEstado = document.getElementById("dEstadoSelect").value;
+    const nota = document.getElementById("dNota").value.trim();
+    const montoReembolsado = document.getElementById("dMontoReembolsado") ? document.getElementById("dMontoReembolsado").value : null;
+    const estadoCambio = nuevoEstado !== item.estado;
+    if(estadoCambio){
+      item.historial = item.historial || [];
+      item.historial.push({fecha:new Date().toISOString(), texto:`Estado cambiado a "${ESTADOS[nuevoEstado].label}"`});
+      item.estado = nuevoEstado;
+      if(nuevoEstado==="enviada" && !item.fechaEnvio) item.fechaEnvio = new Date().toISOString();
+    }
+    if(montoReembolsado) item.montoReembolsado = Number(montoReembolsado);
+    if(nota){
+      item.historial = item.historial || [];
+      item.historial.push({fecha:new Date().toISOString(), texto:nota});
+    }
+    if(!estadoCambio && !nota && !montoReembolsado){ toast("No hay cambios que guardar"); return; }
+    await dbPut(item);
+    await loadItems();
+    toast("Seguimiento actualizado");
+    openDetail(id);
+  });
+
+  document.getElementById("detailBody").querySelectorAll(".lb-open").forEach(img=>{
+    img.addEventListener("click", ()=>{
+      document.getElementById("lightboxImg").src = img.dataset.src;
+      document.getElementById("lightbox").classList.add("show");
+    });
+  });
+
+  document.getElementById("detailOverlay").classList.add("show");
+}
+function closeDetail(){
+  document.getElementById("detailOverlay").classList.remove("show");
+  detailId = null;
+}
+
+/* ---------------- ZIP export: "carpeta para la isapre" ---------------- */
+function slug(s){
+  return String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-zA-Z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,40) || "sin_dato";
+}
+async function exportZip(){
+  const selected = items.filter(i=>selectedIds.has(i.id));
+  if(selected.length===0) return;
+  const zip = new JSZip();
+  const carpeta = zip.folder("Reembolso_Isapre_" + new Date().toISOString().slice(0,10));
+  let csv = "Fecha,Categoria,Prestador,N Boleta,Descripcion,Monto,Estado\n";
+  let totalMonto = 0;
+
+  selected.forEach((item, idx)=>{
+    const base = `${idx+1}_${item.fecha}_${slug(item.prestador)}_${slug(item.numeroBoleta)}`;
+    (item.fotos||[]).forEach((foto, fi)=>{
+      const dataUrl = foto.dataUrl;
+      const base64 = dataUrl.split(",")[1];
+      carpeta.file(`${base}_foto${fi+1}.jpg`, base64, {base64:true});
+    });
+    csv += [item.fecha, item.categoria, item.prestador, item.numeroBoleta, `"${(item.descripcion||"").replace(/"/g,'""')}"`, item.monto||0, ESTADOS[item.estado].label].join(",") + "\n";
+    totalMonto += Number(item.monto)||0;
+  });
+  csv += `\nTOTAL,,,,,${totalMonto},\n`;
+  carpeta.file("Resumen_para_isapre.csv", csv);
+
+  const readme = `RESUMEN DE REEMBOLSOS - LISTO PARA ENVIAR A LA ISAPRE
+Generado: ${new Date().toLocaleString("es-CL")}
+Prestaciones incluidas: ${selected.length}
+Monto total de boletas: ${fmtCLP(totalMonto)}
+
+Instrucciones:
+1. Revisa que todas las fotos se vean nítidas y completas (boleta, orden médica, informe si corresponde).
+2. Ingresa al sitio o app de tu isapre y sube estos archivos en la sección de reembolsos / solicitudes.
+3. Anota el N° de folio o ticket que te entregue la isapre y regístralo como nota de seguimiento en la app.
+4. Marca cada prestación como "Enviada" en la app para llevar el seguimiento.
+`;
+  carpeta.file("LEEME.txt", readme);
+
+  const blob = await zip.generateAsync({type:"blob"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `Reembolso_Isapre_${new Date().toISOString().slice(0,10)}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+
+  // marcar como "lista" automáticamente si estaban pendientes
+  for(const item of selected){
+    if(item.estado==="pendiente"){
+      item.estado = "lista";
+      item.historial = item.historial||[];
+      item.historial.push({fecha:new Date().toISOString(), texto:"Incluida en carpeta ZIP preparada para la isapre"});
+      await dbPut(item);
+    }
+  }
+  await loadItems();
+  toast("Carpeta ZIP descargada ✅");
+  selectedIds.clear();
+  selectMode = false;
+  document.getElementById("btnSelectMode").textContent = "Seleccionar";
+  renderAll();
+}
+
+/* ---------------- backup / restore ---------------- */
+async function backup(){
+  const data = { exportado: new Date().toISOString(), items };
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `respaldo_reembolsos_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  toast("Respaldo descargado");
+}
+async function restoreFromFile(file){
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const incoming = Array.isArray(data) ? data : (data.items||[]);
+    if(!Array.isArray(incoming)) throw new Error("Formato inválido");
+    for(const item of incoming){
+      if(!item.id) item.id = uid();
+      await dbPut(item);
+    }
+    await loadItems();
+    toast(`Respaldo restaurado: ${incoming.length} prestaciones`);
+  }catch(err){
+    alert("No se pudo leer el archivo de respaldo: " + err.message);
+  }
+}
+
+/* ---------------- load / init ---------------- */
+async function loadItems(){
+  items = await dbGetAll();
+  renderAll();
+}
+
+function checkStorage(){
+  const banner = document.getElementById("storageBanner");
+  if(!window.indexedDB){
+    storageUsable = false;
+    banner.innerHTML = "⚠️ Este navegador no soporta almacenamiento local (IndexedDB), por lo que los datos no se guardarán al recargar. Abre esta página en un navegador normal (Chrome, Safari, Edge) fuera de vistas previas incrustadas.";
+    return;
+  }
+  banner.innerHTML = "Tus prestaciones y fotos se guardan automáticamente en este navegador. Si estás viendo esta app dentro de una vista previa de chat, los datos pueden no persistir — ábrela en su propia pestaña (o en tu sitio de GitHub Pages) para que el guardado funcione siempre.";
+}
+
+async function init(){
+  checkStorage();
+  try{
+    db = await openDB();
+    await loadItems();
+  }catch(err){
+    console.error(err);
+    document.getElementById("storageBanner").innerHTML = "⚠️ No se pudo abrir el almacenamiento local en este navegador. Prueba abrir esta página fuera de modo incógnito o en otro navegador.";
+  }
+
+  document.getElementById("btnNew").addEventListener("click", ()=>openForm(null));
+  document.getElementById("btnCancelForm").addEventListener("click", closeForm);
+  document.getElementById("formOverlay").addEventListener("click", (e)=>{ if(e.target.id==="formOverlay") closeForm(); });
+  document.getElementById("detailOverlay").addEventListener("click", (e)=>{ if(e.target.id==="detailOverlay") closeDetail(); });
+  document.getElementById("btnCloseDetail").addEventListener("click", closeDetail);
+  document.getElementById("lightbox").addEventListener("click", ()=>document.getElementById("lightbox").classList.remove("show"));
+
+  document.getElementById("dropZone").addEventListener("click", ()=>document.getElementById("fFotos").click());
+  document.getElementById("fFotos").addEventListener("change", (e)=>handleFiles(e.target.files));
+
+  document.getElementById("prestacionForm").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    const item = {
+      id: editingId || uid(),
+      fecha: document.getElementById("fFecha").value,
+      categoria: document.getElementById("fCategoria").value,
+      descripcion: document.getElementById("fDescripcion").value.trim(),
+      prestador: document.getElementById("fPrestador").value.trim(),
+      numeroBoleta: document.getElementById("fBoleta").value.trim(),
+      monto: Number(document.getElementById("fMonto").value)||0,
+      estado: document.getElementById("fEstado").value,
+      fotos: pendingFotos,
+      historial: [],
+      creado: Date.now()
+    };
+    if(editingId){
+      const old = items.find(i=>i.id===editingId);
+      item.historial = old ? (old.historial||[]) : [];
+      item.creado = old ? old.creado : Date.now();
+      item.montoReembolsado = old ? old.montoReembolsado : undefined;
+      item.historial.push({fecha:new Date().toISOString(), texto:"Datos editados"});
+    } else {
+      item.historial.push({fecha:new Date().toISOString(), texto:"Prestación creada"});
+    }
+    const nota = document.getElementById("fNota").value.trim();
+    if(nota) item.historial.push({fecha:new Date().toISOString(), texto:nota});
+
+    await dbPut(item);
+    await loadItems();
+    closeForm();
+    toast(editingId ? "Prestación actualizada" : "Prestación agregada");
+  });
+
+  document.getElementById("btnEdit").addEventListener("click", ()=>{
+    const item = items.find(i=>i.id===detailId);
+    closeDetail();
+    openForm(item);
+  });
+  document.getElementById("btnDelete").addEventListener("click", async ()=>{
+    if(!confirm("¿Eliminar esta prestación y sus fotos? Esta acción no se puede deshacer.")) return;
+    await dbDelete(detailId);
+    closeDetail();
+    await loadItems();
+    toast("Prestación eliminada");
+  });
+
+  ["filterEstado","filterCategoria"].forEach(id=>{
+    document.getElementById(id).addEventListener("change", renderGrid);
+  });
+  document.getElementById("filterTexto").addEventListener("input", renderGrid);
+
+  document.getElementById("btnSelectMode").addEventListener("click", ()=>{
+    selectMode = !selectMode;
+    selectedIds.clear();
+    document.getElementById("btnSelectMode").textContent = selectMode ? "Cancelar selección" : "Seleccionar";
+    renderGrid();
+    updateExportButton();
+  });
+  document.getElementById("btnExportZip").addEventListener("click", exportZip);
+
+  document.getElementById("btnBackup").addEventListener("click", backup);
+  document.getElementById("btnRestore").addEventListener("click", ()=>document.getElementById("restoreInput").click());
+  document.getElementById("restoreInput").addEventListener("change", (e)=>{
+    if(e.target.files[0]) restoreFromFile(e.target.files[0]);
+    e.target.value = "";
+  });
+}
+
+init();
+})();
+</script>
+</body>
+</html>
