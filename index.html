@@ -118,6 +118,7 @@
     <button class="btn-secondary btn-sm" id="btnBackup">⬇️ Respaldo</button>
     <button class="btn-secondary btn-sm" id="btnRestore">⬆️ Restaurar</button>
     <input type="file" id="restoreInput" accept="application/json" style="display:none;">
+    <button class="btn-secondary btn-sm" id="btnDriveSettings">☁️ Google Drive</button>
     <button class="btn-primary" id="btnNew">+ Nueva prestación</button>
   </div>
 </header>
@@ -249,9 +250,46 @@
   </div>
 </div>
 
+<!-- Modal: respaldo en Google Drive -->
+<div class="overlay" id="driveOverlay">
+  <div class="modal" style="max-width:480px;">
+    <h2>☁️ Respaldo en Google Drive</h2>
+    <p style="font-size:12.5px;color:var(--muted);line-height:1.55;margin-top:0;">
+      Guarda automáticamente una copia de tus datos (en un archivo .json) en tu propio Google Drive.
+      La app pide permiso únicamente sobre <b>los archivos que ella misma crea</b> — no puede ver ni tocar el resto de tu Drive.
+      El acceso queda solo en memoria: si cierras la pestaña, tendrás que conectar de nuevo la próxima vez.
+    </p>
+    <div class="field">
+      <label>Google OAuth Client ID</label>
+      <input type="text" id="driveClientId" placeholder="xxxxxxxx.apps.googleusercontent.com">
+    </div>
+    <div class="actions" style="justify-content:flex-start;margin-top:-4px;margin-bottom:14px;">
+      <button type="button" class="btn-secondary btn-sm" id="btnDriveSaveId">Guardar Client ID</button>
+    </div>
+    <div class="field">
+      <label>Estado</label>
+      <div id="driveStatus" style="font-size:13px;">⚪ No conectado</div>
+    </div>
+    <div class="checkbox-row" style="margin:10px 0;">
+      <input type="checkbox" id="driveAutoBackup">
+      <label style="margin:0;font-weight:500;color:var(--ink);">Respaldar automáticamente cada vez que haya cambios</label>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn-danger" id="btnDriveDisconnect" style="display:none;">Desconectar</button>
+      <div class="spacer"></div>
+      <button type="button" class="btn-secondary" id="btnDriveNow" disabled>Respaldar ahora</button>
+      <button type="button" class="btn-primary" id="btnDriveConnect" disabled>Conectar con Google Drive</button>
+    </div>
+    <div class="actions" style="margin-top:2px;">
+      <button type="button" class="btn-ghost" id="btnDriveClose" style="margin-left:auto;">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <div class="lightbox" id="lightbox"><img id="lightboxImg"></div>
 <div class="toast" id="toast"></div>
 
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 (function(){
@@ -684,10 +722,133 @@ async function restoreFromFile(file){
   }
 }
 
+/* ---------------- Google Drive backup (opcional) ---------------- */
+const GDRIVE_SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email";
+let gAccessToken = null;   // vive solo en memoria, nunca se guarda en disco
+let gTokenClient = null;
+let gUserEmail = null;
+let autoBackupTimer = null;
+
+function getClientId(){ return localStorage.getItem("gdrive_client_id") || ""; }
+function setClientId(v){ localStorage.setItem("gdrive_client_id", (v||"").trim()); }
+function getAutoBackupEnabled(){ return localStorage.getItem("gdrive_autobackup") === "1"; }
+function setAutoBackupEnabled(v){ localStorage.setItem("gdrive_autobackup", v ? "1":"0"); }
+
+function refreshDriveStatusUI(){
+  const statusEl = document.getElementById("driveStatus");
+  if(!statusEl) return;
+  statusEl.innerHTML = gAccessToken
+    ? `✅ Conectado${gUserEmail ? " como <b>"+escapeHtml(gUserEmail)+"</b>" : ""}`
+    : "⚪ No conectado";
+  const chk = document.getElementById("driveAutoBackup");
+  if(chk) chk.checked = getAutoBackupEnabled();
+  document.getElementById("btnDriveConnect").disabled = !getClientId();
+  document.getElementById("btnDriveConnect").textContent = gAccessToken ? "Reconectar" : "Conectar con Google Drive";
+  document.getElementById("btnDriveDisconnect").style.display = gAccessToken ? "inline-flex" : "none";
+  document.getElementById("btnDriveNow").disabled = !gAccessToken;
+}
+
+function openDriveSettings(){
+  document.getElementById("driveClientId").value = getClientId();
+  refreshDriveStatusUI();
+  document.getElementById("driveOverlay").classList.add("show");
+}
+function closeDriveSettings(){ document.getElementById("driveOverlay").classList.remove("show"); }
+
+function ensureTokenClient(){
+  const clientId = getClientId();
+  if(!clientId){ alert("Primero pega tu Client ID de Google y haz clic en \"Guardar Client ID\"."); return null; }
+  if(!window.google || !window.google.accounts || !window.google.accounts.oauth2){
+    alert("La librería de Google todavía está cargando. Espera unos segundos e inténtalo de nuevo.");
+    return null;
+  }
+  if(!gTokenClient || gTokenClient._cid !== clientId){
+    gTokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: GDRIVE_SCOPES,
+      callback: async (resp)=>{
+        if(resp.error){ toast("No se pudo conectar con Google: " + resp.error); return; }
+        gAccessToken = resp.access_token;
+        try{
+          const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {headers:{Authorization:"Bearer "+gAccessToken}});
+          const info = await r.json();
+          gUserEmail = info.email || null;
+        }catch(e){ gUserEmail = null; }
+        refreshDriveStatusUI();
+        toast("Conectado a Google Drive ✅");
+      }
+    });
+    gTokenClient._cid = clientId;
+  }
+  return gTokenClient;
+}
+
+function connectDrive(){
+  const tc = ensureTokenClient();
+  if(!tc) return;
+  tc.requestAccessToken({ prompt: gAccessToken ? "" : "consent" });
+}
+
+function disconnectDrive(){
+  if(gAccessToken && window.google && window.google.accounts && window.google.accounts.oauth2){
+    window.google.accounts.oauth2.revoke(gAccessToken, ()=>{});
+  }
+  gAccessToken = null;
+  gUserEmail = null;
+  refreshDriveStatusUI();
+  toast("Desconectado de Google Drive");
+}
+
+async function findDriveFileId(name){
+  const q = encodeURIComponent(`name='${name}' and trashed=false`);
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
+    headers:{Authorization:"Bearer "+gAccessToken}
+  });
+  if(!r.ok) throw new Error("No se pudo consultar Google Drive (¿el permiso expiró? intenta reconectar).");
+  const data = await r.json();
+  return (data.files && data.files[0]) ? data.files[0].id : null;
+}
+
+async function uploadBackupToDrive(silent){
+  if(!gAccessToken){ if(!silent) alert("Primero conéctate a Google Drive."); return; }
+  const filename = "respaldo_reembolsos_isapre.json";
+  const data = { exportado: new Date().toISOString(), items };
+  const jsonStr = JSON.stringify(data, null, 2);
+  try{
+    const existingId = await findDriveFileId(filename);
+    const metadata = { name: filename, mimeType: "application/json" };
+    const boundary = "-------reembolsos" + Date.now();
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${jsonStr}\r\n` +
+      `--${boundary}--`;
+    const url = existingId
+      ? `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`
+      : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+    const r = await fetch(url, {
+      method: existingId ? "PATCH" : "POST",
+      headers:{ Authorization:"Bearer "+gAccessToken, "Content-Type": `multipart/related; boundary=${boundary}` },
+      body
+    });
+    if(!r.ok){ const t = await r.text(); throw new Error(t); }
+    if(!silent) toast("Respaldo subido a Google Drive ✅");
+  }catch(err){
+    console.error(err);
+    if(!silent) alert("No se pudo subir el respaldo a Google Drive: " + err.message);
+  }
+}
+
+function maybeAutoBackup(){
+  if(!getAutoBackupEnabled() || !gAccessToken) return;
+  clearTimeout(autoBackupTimer);
+  autoBackupTimer = setTimeout(()=>{ uploadBackupToDrive(true); }, 1500);
+}
+
 /* ---------------- load / init ---------------- */
 async function loadItems(){
   items = await dbGetAll();
   renderAll();
+  maybeAutoBackup();
 }
 
 function checkStorage(){
@@ -786,6 +947,20 @@ async function init(){
     if(e.target.files[0]) restoreFromFile(e.target.files[0]);
     e.target.value = "";
   });
+
+  document.getElementById("btnDriveSettings").addEventListener("click", openDriveSettings);
+  document.getElementById("btnDriveClose").addEventListener("click", closeDriveSettings);
+  document.getElementById("driveOverlay").addEventListener("click", (e)=>{ if(e.target.id==="driveOverlay") closeDriveSettings(); });
+  document.getElementById("btnDriveSaveId").addEventListener("click", ()=>{
+    setClientId(document.getElementById("driveClientId").value);
+    gTokenClient = null;
+    toast("Client ID guardado");
+    refreshDriveStatusUI();
+  });
+  document.getElementById("btnDriveConnect").addEventListener("click", connectDrive);
+  document.getElementById("btnDriveDisconnect").addEventListener("click", disconnectDrive);
+  document.getElementById("btnDriveNow").addEventListener("click", ()=>uploadBackupToDrive(false));
+  document.getElementById("driveAutoBackup").addEventListener("change", (e)=>setAutoBackupEnabled(e.target.checked));
 }
 
 init();
