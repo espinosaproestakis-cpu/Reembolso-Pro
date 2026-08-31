@@ -755,11 +755,13 @@ function openDriveSettings(){
 }
 function closeDriveSettings(){ document.getElementById("driveOverlay").classList.remove("show"); }
 
-function ensureTokenClient(){
+let gPendingSilent = false;
+
+function ensureTokenClient(silent){
   const clientId = getClientId();
-  if(!clientId){ alert("Primero pega tu Client ID de Google y haz clic en \"Guardar Client ID\"."); return null; }
+  if(!clientId){ if(!silent) alert("Primero pega tu Client ID de Google y haz clic en \"Guardar Client ID\"."); return null; }
   if(!window.google || !window.google.accounts || !window.google.accounts.oauth2){
-    alert("La librería de Google todavía está cargando. Espera unos segundos e inténtalo de nuevo.");
+    if(!silent) alert("La librería de Google todavía está cargando. Espera unos segundos e inténtalo de nuevo.");
     return null;
   }
   if(!gTokenClient || gTokenClient._cid !== clientId){
@@ -767,7 +769,14 @@ function ensureTokenClient(){
       client_id: clientId,
       scope: GDRIVE_SCOPES,
       callback: async (resp)=>{
-        if(resp.error){ toast("No se pudo conectar con Google: " + resp.error); return; }
+        const wasSilent = gPendingSilent;
+        gPendingSilent = false;
+        if(resp.error){
+          // un intento silencioso (auto-conectar al cargar la página) puede fallar
+          // sin que haya nada realmente mal — no molestamos al usuario con un error.
+          if(!wasSilent) toast("No se pudo conectar con Google: " + resp.error);
+          return;
+        }
         gAccessToken = resp.access_token;
         try{
           const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {headers:{Authorization:"Bearer "+gAccessToken}});
@@ -783,11 +792,24 @@ function ensureTokenClient(){
   return gTokenClient;
 }
 
-function connectDrive(){
-  const tc = ensureTokenClient();
+function connectDrive(opts){
+  opts = opts || {};
+  const tc = ensureTokenClient(opts.silent);
   if(!tc) return;
-  tc.requestAccessToken({ prompt: gAccessToken ? "" : "consent" });
+  gPendingSilent = !!opts.silent;
+  tc.requestAccessToken({ prompt: opts.silent ? "none" : (gAccessToken ? "" : "consent") });
 }
+
+// Al cargar la página, si ya guardaste un Client ID, intenta reconectar en
+// silencio (sin ventana emergente) usando la sesión de Google activa en este
+// navegador. Solo funciona si ya diste el permiso una vez antes desde este
+// mismo navegador; si no, no pasa nada — simplemente queda "no conectado" y
+// puedes conectar manualmente con el botón.
+window.addEventListener("load", ()=>{
+  setTimeout(()=>{
+    if(getClientId()) connectDrive({silent:true});
+  }, 300);
+});
 
 function disconnectDrive(){
   if(gAccessToken && window.google && window.google.accounts && window.google.accounts.oauth2){
