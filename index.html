@@ -108,6 +108,12 @@
 
   .banner{background:var(--primary-light);color:var(--primary-dark);border:1px solid #c7d9fc;border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:16px;line-height:1.5;}
   .footer-note{color:var(--muted);font-size:11.5px;text-align:center;margin-top:30px;line-height:1.6;}
+
+  .doctype-badge{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;color:var(--primary-dark);background:var(--primary-light);border-radius:6px;padding:2px 7px;margin-top:2px;}
+  .doctype-badge.low{color:var(--muted);background:var(--gray-bg);}
+
+  .spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--primary);margin:6px auto 0;animation:spin 0.8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
 </style>
 </head>
 <body>
@@ -119,6 +125,8 @@
     <button class="btn-secondary btn-sm" id="btnRestore">⬆️ Restaurar</button>
     <input type="file" id="restoreInput" accept="application/json" style="display:none;">
     <button class="btn-secondary btn-sm" id="btnDriveSettings">☁️ Google Drive</button>
+    <button class="btn-secondary" id="btnAutoUpload">📄 Subir documento (auto)</button>
+    <input type="file" id="autoUploadInput" accept="image/*,application/pdf" multiple capture="environment" style="display:none;">
     <button class="btn-primary" id="btnNew">+ Nueva prestación</button>
   </div>
 </header>
@@ -141,6 +149,16 @@
     </select>
     <select id="filterCategoria">
       <option value="">Todas las categorías</option>
+    </select>
+    <select id="filterTipoDoc">
+      <option value="">Todos los tipos de documento</option>
+      <option value="boleta_medicamentos">Boleta de medicamentos</option>
+      <option value="orden_medicamentos">Orden médica (receta)</option>
+      <option value="boleta_medica">Boleta atención médica</option>
+      <option value="boleta_psicologia">Boleta psicología</option>
+      <option value="boleta_kinesiologia">Boleta kinesiología</option>
+      <option value="comprobante_isapre">Comprobante reembolso isapre</option>
+      <option value="otro">Otro / sin identificar</option>
     </select>
     <input type="text" id="filterTexto" placeholder="Buscar por prestador, N° boleta o descripción...">
     <div class="spacer"></div>
@@ -167,6 +185,7 @@
     <h2 id="formTitle">Nueva prestación</h2>
     <form id="prestacionForm">
       <input type="hidden" id="fId">
+      <div id="docTypeHint" class="banner" style="display:none;margin-bottom:14px;"></div>
       <div class="row2">
         <div class="field">
           <label>Fecha de la prestación</label>
@@ -180,6 +199,7 @@
             <option>Cirugía</option>
             <option>Medicamentos</option>
             <option>Kinesiología / Terapia</option>
+            <option>Psicología</option>
             <option>Dental</option>
             <option>Urgencia</option>
             <option>Otro</option>
@@ -286,11 +306,21 @@
   </div>
 </div>
 
+<!-- Overlay: analizando documento (OCR) -->
+<div class="overlay" id="analyzingOverlay">
+  <div class="modal" style="max-width:320px;text-align:center;">
+    <div class="spinner"></div>
+    <div id="analyzingText" style="margin-top:14px;font-size:13.5px;color:var(--muted);">Analizando documento...</div>
+  </div>
+</div>
+
 <div class="lightbox" id="lightbox"><img id="lightboxImg"></div>
 <div class="toast" id="toast"></div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
 <script>
 (function(){
 "use strict";
@@ -339,6 +369,7 @@ function dbDelete(id){
 /* ---------------- state ---------------- */
 let items = [];           // all prestaciones in memory (mirrors IndexedDB)
 let pendingFotos = [];     // {name, dataUrl} for the form currently open
+let pendingTipoDocumento = null; // tipo detectado automáticamente para la prestación en edición
 let editingId = null;
 let selectMode = false;
 let selectedIds = new Set();
@@ -389,6 +420,276 @@ function resizeImage(file, maxW){
   });
 }
 
+/* ---------------- OCR / detección automática de documentos ---------------- */
+const DOC_TYPES = {
+  boleta_medicamentos: "Boleta de medicamentos (farmacia)",
+  orden_medicamentos: "Orden médica para medicamentos (receta)",
+  boleta_medica: "Boleta de atención médica",
+  boleta_psicologia: "Boleta de atención psicología",
+  boleta_kinesiologia: "Boleta de atención kinesiología",
+  comprobante_isapre: "Comprobante de reembolso isapre",
+  otro: "Otro / no identificado"
+};
+const CATEGORY_BY_DOCTYPE = {
+  boleta_medicamentos: "Medicamentos",
+  orden_medicamentos: "Medicamentos",
+  boleta_medica: "Consulta médica",
+  boleta_psicologia: "Psicología",
+  boleta_kinesiologia: "Kinesiología / Terapia",
+  comprobante_isapre: "Otro",
+  otro: "Otro"
+};
+const MESES_ES = {enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,septiembre:9,setiembre:9,octubre:10,noviembre:11,diciembre:12};
+
+function setAnalyzingText(msg){
+  const el = document.getElementById("analyzingText");
+  if(el) el.textContent = msg;
+}
+function showAnalyzingOverlay(show){
+  document.getElementById("analyzingOverlay").classList.toggle("show", !!show);
+}
+
+let tesseractWorkerPromise = null;
+function getTesseractWorker(){
+  if(!tesseractWorkerPromise){
+    if(typeof Tesseract === "undefined") return Promise.reject(new Error("La librería de lectura de texto (Tesseract) no cargó. Revisa tu conexión a internet y recarga la página."));
+    tesseractWorkerPromise = Tesseract.createWorker("spa", 1, {
+      logger: (m)=>{
+        if(m.status === "recognizing text"){
+          setAnalyzingText(`Leyendo texto... ${Math.round((m.progress||0)*100)}%`);
+        }
+      }
+    });
+  }
+  return tesseractWorkerPromise;
+}
+async function ocrImage(dataUrl){
+  const worker = await getTesseractWorker();
+  const { data } = await worker.recognize(dataUrl);
+  return data.text || "";
+}
+
+async function processImageFile(file){
+  const dataUrl = await resizeImage(file, 1600);
+  setAnalyzingText("Leyendo texto de la imagen...");
+  const text = await ocrImage(dataUrl);
+  return { images: [{name:file.name, dataUrl}], text };
+}
+
+async function processPdfFile(file){
+  if(typeof pdfjsLib === "undefined") throw new Error("La librería para leer PDF no cargó. Revisa tu conexión a internet y recarga la página.");
+  if(!pdfjsLib.GlobalWorkerOptions.workerSrc){
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js";
+  }
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+  const images = [];
+  let text = "";
+  const maxPages = Math.min(pdf.numPages, 6); // límite razonable por documento
+  for(let p=1; p<=maxPages; p++){
+    setAnalyzingText(`Procesando página ${p} de ${maxPages}...`);
+    const page = await pdf.getPage(p);
+    const viewport = page.getViewport({scale:2});
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({canvasContext: canvas.getContext("2d"), viewport}).promise;
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    images.push({name: file.name.replace(/\.pdf$/i,"") + `_p${p}.jpg`, dataUrl});
+
+    let pageText = "";
+    try{
+      const tc = await page.getTextContent();
+      pageText = tc.items.map(it=>it.str).join(" ");
+    }catch(e){ pageText = ""; }
+
+    if(pageText.trim().length > 15){
+      text += pageText + "\n";
+    } else {
+      // PDF escaneado (imagen) sin capa de texto: recurre a OCR
+      text += (await ocrImage(dataUrl)) + "\n";
+    }
+  }
+  return { images, text };
+}
+
+async function processFile(file){
+  if(file.type === "application/pdf") return await processPdfFile(file);
+  if(file.type.startsWith("image/")) return await processImageFile(file);
+  throw new Error("Tipo de archivo no soportado: " + file.type);
+}
+
+function normalizeText(s){
+  return (s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"");
+}
+function countMatches(norm, keywords){
+  return keywords.reduce((acc,k)=> acc + (norm.includes(k) ? 1 : 0), 0);
+}
+function parseCLPNumber(str){
+  if(!str) return null;
+  let s = str.trim();
+  const dec = s.match(/^([\d.]+),(\d{2})$/);
+  if(dec) s = dec[1];
+  s = s.replace(/[^\d]/g, "");
+  if(!s) return null;
+  const n = parseInt(s, 10);
+  return isNaN(n) ? null : n;
+}
+function pad2(n){ return String(n).padStart(2,"0"); }
+
+function extractFecha(text){
+  let m = text.match(/(\d{1,2})\s*de\s*([a-záéíóúñ]+)\s*de\s*(\d{4})/i);
+  if(m){
+    const mes = MESES_ES[normalizeText(m[2])];
+    if(mes) return `${m[3]}-${pad2(mes)}-${pad2(m[1])}`;
+  }
+  m = text.match(/\b([0-3]?\d)[\/\-]([01]?\d)[\/\-](20\d{2})\b/);
+  if(m){
+    const dd=parseInt(m[1],10), mm=parseInt(m[2],10);
+    if(dd>=1 && dd<=31 && mm>=1 && mm<=12) return `${m[3]}-${pad2(mm)}-${pad2(dd)}`;
+  }
+  return null;
+}
+
+function extractMonto(text){
+  let m = text.match(/monto\s*reembolso\s*:?\s*\$?\s*([\d.,]+)/i);
+  if(m){ const n = parseCLPNumber(m[1]); if(n) return n; }
+  m = text.match(/total\s*honorarios\s*:?\s*\$?:?\s*([\d.,]+)/i);
+  if(m){ const n = parseCLPNumber(m[1]); if(n) return n; }
+  const candidates = [];
+  for(const line of text.split(/\n/)){
+    if(/subtotal|sub total|neto|exento|iva|descuento|dscto/i.test(line)) continue;
+    const lm = line.match(/total(es)?[^\d\n]{0,20}\$?\s*([\d.,]{3,})/i);
+    if(lm){ const n = parseCLPNumber(lm[2]); if(n) candidates.push(n); }
+  }
+  if(candidates.length) return candidates[candidates.length-1];
+  const dollarMatches = Array.from(text.matchAll(/\$\s*(\d{1,3}(?:\.\d{3})+)/g)).map(mm=>parseCLPNumber(mm[1])).filter(Boolean);
+  if(dollarMatches.length) return Math.max(...dollarMatches);
+  return null;
+}
+
+function extractLabeled(text, labelPatterns, stopWords){
+  const stopRe = (stopWords && stopWords.length) ? new RegExp("(" + stopWords.join("|") + ")", "i") : null;
+  for(const lp of labelPatterns){
+    const re = new RegExp(lp + "\\s*:?\\s*([^\\n]{2,90})", "i");
+    const m = text.match(re);
+    if(m){
+      let val = m[1];
+      if(stopRe){
+        const sIdx = val.search(stopRe);
+        if(sIdx > 0) val = val.slice(0, sIdx);
+      }
+      val = val.replace(/\s{2,}/g," ").trim();
+      if(val) return val;
+    }
+  }
+  return null;
+}
+function extractPaciente(text){
+  return extractLabeled(text, [
+    "nombre\\s*benef\\.?",
+    "se[nñ]or\\(es\\)",
+    "se[nñ]or\\(as\\)",
+    "paciente",
+    "nombre\\s*paciente",
+    "nombre\\s*afiliado",
+  ], ["rut","r\\.u\\.t","c[oó]digo","nombre\\s*benef","direcci[oó]n","tel[eé]fono","f\\.\\s*emisi[oó]n","fecha"]);
+}
+function firstNonEmptyLine(text){
+  const skipWords = /^(boleta|receta|comprobante|solicitud|folio|rp\b|prescripci[oó]n)/i;
+  const lines = text.split(/\n/).map(l=>l.trim()).filter(Boolean);
+  for(const l of lines){ if(!skipWords.test(l)) return l.slice(0,60); }
+  return lines[0] ? lines[0].slice(0,60) : null;
+}
+function extractPrestador(text){
+  return extractLabeled(text, ["prestador"], ["tratante","rut","r\\.u\\.t","impresi[oó]n"]) || firstNonEmptyLine(text);
+}
+function extractNumeroBoleta(text){
+  const raw = extractLabeled(text, [
+    "boleta\\s*electr[oó]nica\\s*nro\\.?",
+    "folio\\s*:?",
+    "n\\s*[°º]\\s*",
+  ], ["fecha","valido","rut","nro\\.\\s*pam"]);
+  if(!raw) return null;
+  const m = raw.match(/^[\w.\-\/]+/);
+  return m ? m[0] : raw.slice(0,20);
+}
+function extractDetalle(text, tipo){
+  if(tipo === "boleta_kinesiologia"){
+    const count = (text.match(/atenci[oó]n\s*kinesiol[oó]gica/gi)||[]).length;
+    if(count > 0) return `${count} sesión${count>1?"es":""} de kinesiología`;
+  }
+  if(tipo === "boleta_medica"){
+    let m = text.match(/por atenci[oó]n profesional:?\s*\n?\s*([^\n]{3,90})/i);
+    if(!m) m = text.match(/\d+x\s*([a-záéíóúñ][a-záéíóúñ\s]{2,60})/i);
+    if(m) return m[1].trim();
+  }
+  if(tipo === "comprobante_isapre"){
+    const m = text.match(/\d{4,}\(\d\)\s*([A-ZÁÉÍÓÚÑ0-9\s]{5,60})/);
+    if(m) return m[1].replace(/\s{2,}/g," ").trim();
+  }
+  if(tipo === "boleta_medicamentos" || tipo === "orden_medicamentos"){
+    const meds = Array.from(text.matchAll(/([A-Za-zÁÉÍÓÚÑáéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ()\- ]{1,30}?\s\d+[.,]?\d*\s*(mg|mcg|ml)\b)/gi))
+      .map(m=>m[1].replace(/\s{2,}/g," ").trim());
+    if(meds.length) return Array.from(new Set(meds)).slice(0,3).join(", ");
+  }
+  return null;
+}
+
+function classifyAndExtract(text){
+  const norm = normalizeText(text);
+  const scores = {
+    boleta_medicamentos: countMatches(norm, ["farmacia","salcobrand","cruz verde","ahumada","boleta electronica","liga chilena","medicamento"]),
+    orden_medicamentos: countMatches(norm, ["rp (prescripcion)","prescripcion","dosis","via de administracion","administrar","medico cirujano","comprimido","gotas via oral","receta"]),
+    boleta_kinesiologia: countMatches(norm, ["kinesiolog","atencion kinesiologica"]),
+    boleta_psicologia: countMatches(norm, ["psicolog","psicoterapia","sesion psicologica"]),
+    comprobante_isapre: countMatches(norm, ["isapre","solicitud de bonificacion","monto reembolso","totales isapre","reembolso","banmedica","cruz blanca","consalud","colmena","masvida"]),
+    boleta_medica: countMatches(norm, ["boleta de honorarios","consulta medica","honorarios medicos","atencion medica","psiquiatra","endocrinologia","medico psiquiatra"]),
+  };
+  let best = "otro", bestScore = 0;
+  for(const [k,v] of Object.entries(scores)){
+    if(v > bestScore){ best = k; bestScore = v; }
+  }
+  return {
+    tipoDocumento: best,
+    tipoDocumentoLabel: DOC_TYPES[best],
+    confianza: bestScore,
+    fecha: extractFecha(text),
+    monto: extractMonto(text),
+    paciente: extractPaciente(text),
+    prestador: extractPrestador(text),
+    numeroBoleta: extractNumeroBoleta(text),
+    detalle: extractDetalle(text, best)
+  };
+}
+
+/* ---------------- cola de subida automática ---------------- */
+let uploadQueue = [];
+let uploadQueueIndex = 0;
+
+async function processNextInQueue(){
+  if(uploadQueueIndex >= uploadQueue.length){ uploadQueue = []; uploadQueueIndex = 0; return; }
+  const file = uploadQueue[uploadQueueIndex];
+  const n = uploadQueueIndex + 1, total = uploadQueue.length;
+  uploadQueueIndex++;
+
+  showAnalyzingOverlay(true);
+  setAnalyzingText(`Analizando documento ${n} de ${total}...`);
+  try{
+    const { images, text } = await processFile(file);
+    const guess = classifyAndExtract(text);
+    showAnalyzingOverlay(false);
+    openForm(null, { images, guess });
+  }catch(err){
+    console.error(err);
+    showAnalyzingOverlay(false);
+    alert("No se pudo analizar \"" + file.name + "\": " + err.message + "\nPuedes completar los datos a mano.");
+    let images = [];
+    try{ if(file.type.startsWith("image/")) images = [{name:file.name, dataUrl: await resizeImage(file, 1600)}]; }catch(e){}
+    openForm(null, { images, guess: null });
+  }
+}
+
 /* ---------------- render ---------------- */
 function computeStats(){
   const total = items.length;
@@ -425,10 +726,12 @@ function escapeHtml(s){
 function filteredItems(){
   const estado = document.getElementById("filterEstado").value;
   const categoria = document.getElementById("filterCategoria").value;
+  const tipoDoc = document.getElementById("filterTipoDoc").value;
   const texto = document.getElementById("filterTexto").value.trim().toLowerCase();
   return items
     .filter(i => !estado || i.estado===estado)
     .filter(i => !categoria || i.categoria===categoria)
+    .filter(i => !tipoDoc || i.tipoDocumento===tipoDoc)
     .filter(i => !texto || [i.prestador,i.numeroBoleta,i.descripcion].join(" ").toLowerCase().includes(texto))
     .sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||"") || (b.creado||0)-(a.creado||0));
 }
@@ -463,6 +766,7 @@ function renderGrid(){
           <div class="meta">${escapeHtml(item.categoria||"Otro")} · ${fmtDate(item.fecha)}</div>
           <div class="meta">${escapeHtml(item.prestador||"Prestador no indicado")}${item.numeroBoleta?(" · N° "+escapeHtml(item.numeroBoleta)):""}</div>
           <div class="amount">${fmtCLP(item.monto)}</div>
+          ${item.tipoDocumento ? `<div><span class="doctype-badge">📄 ${escapeHtml(DOC_TYPES[item.tipoDocumento]||item.tipoDocumento)}</span></div>` : ""}
         </div>
         <div class="foot">
           <button class="btn-ghost btn-sm open-detail" data-id="${item.id}">Ver / seguimiento →</button>
@@ -506,27 +810,49 @@ function renderAll(){
 }
 
 /* ---------------- form (nueva / editar) ---------------- */
-function openForm(item){
+function openForm(item, autofill){
   editingId = item ? item.id : null;
-  pendingFotos = item ? (item.fotos||[]).slice() : [];
+  pendingFotos = item ? (item.fotos||[]).slice() : ((autofill && autofill.images) ? autofill.images.slice() : []);
+  const g = (!item && autofill && autofill.guess) ? autofill.guess : null;
+  pendingTipoDocumento = item ? (item.tipoDocumento || null) : (g ? g.tipoDocumento : null);
+
   document.getElementById("formTitle").textContent = item ? "Editar prestación" : "Nueva prestación";
   document.getElementById("fId").value = item ? item.id : "";
-  document.getElementById("fFecha").value = item ? item.fecha : new Date().toISOString().slice(0,10);
-  document.getElementById("fCategoria").value = item ? item.categoria : "Consulta médica";
-  document.getElementById("fDescripcion").value = item ? item.descripcion : "";
-  document.getElementById("fPrestador").value = item ? item.prestador : "";
-  document.getElementById("fBoleta").value = item ? item.numeroBoleta : "";
-  document.getElementById("fMonto").value = item ? item.monto : "";
-  document.getElementById("fEstado").value = item ? item.estado : "pendiente";
+  document.getElementById("fFecha").value = item ? item.fecha : ((g && g.fecha) || new Date().toISOString().slice(0,10));
+  document.getElementById("fCategoria").value = item ? item.categoria : ((g && CATEGORY_BY_DOCTYPE[g.tipoDocumento]) || "Consulta médica");
+  document.getElementById("fDescripcion").value = item ? item.descripcion : ((g && (g.detalle || g.tipoDocumentoLabel)) || "");
+  document.getElementById("fPrestador").value = item ? item.prestador : ((g && g.prestador) || "");
+  document.getElementById("fBoleta").value = item ? item.numeroBoleta : ((g && g.numeroBoleta) || "");
+  document.getElementById("fMonto").value = item ? item.monto : ((g && g.monto) || "");
+  document.getElementById("fEstado").value = item ? item.estado : ((g && g.tipoDocumento==="comprobante_isapre") ? "pagada" : "pendiente");
   document.getElementById("fNota").value = "";
   renderPreviewThumbs();
+  renderDocTypeHint();
   document.getElementById("formOverlay").classList.add("show");
+
+  if(g){
+    toast(g.confianza>0
+      ? `Detecté: "${g.tipoDocumentoLabel}" — revisa y corrige los datos antes de guardar`
+      : `No pude identificar el documento con seguridad — completa los datos a mano`);
+  }
+}
+function renderDocTypeHint(){
+  const el = document.getElementById("docTypeHint");
+  if(!el) return;
+  if(pendingTipoDocumento && DOC_TYPES[pendingTipoDocumento]){
+    el.style.display = "block";
+    el.textContent = "📄 Tipo de documento detectado: " + DOC_TYPES[pendingTipoDocumento];
+  } else {
+    el.style.display = "none";
+  }
 }
 function closeForm(){
   document.getElementById("formOverlay").classList.remove("show");
   document.getElementById("prestacionForm").reset();
   pendingFotos = [];
   editingId = null;
+  pendingTipoDocumento = null;
+  processNextInQueue();
 }
 function renderPreviewThumbs(){
   const wrap = document.getElementById("previewThumbs");
@@ -894,6 +1220,15 @@ async function init(){
   }
 
   document.getElementById("btnNew").addEventListener("click", ()=>openForm(null));
+  document.getElementById("btnAutoUpload").addEventListener("click", ()=>document.getElementById("autoUploadInput").click());
+  document.getElementById("autoUploadInput").addEventListener("change", (e)=>{
+    const files = Array.from(e.target.files);
+    e.target.value = "";
+    if(!files.length) return;
+    uploadQueue = files;
+    uploadQueueIndex = 0;
+    processNextInQueue();
+  });
   document.getElementById("btnCancelForm").addEventListener("click", closeForm);
   document.getElementById("formOverlay").addEventListener("click", (e)=>{ if(e.target.id==="formOverlay") closeForm(); });
   document.getElementById("detailOverlay").addEventListener("click", (e)=>{ if(e.target.id==="detailOverlay") closeDetail(); });
@@ -915,6 +1250,7 @@ async function init(){
       monto: Number(document.getElementById("fMonto").value)||0,
       estado: document.getElementById("fEstado").value,
       fotos: pendingFotos,
+      tipoDocumento: pendingTipoDocumento || null,
       historial: [],
       creado: Date.now()
     };
@@ -925,7 +1261,14 @@ async function init(){
       item.montoReembolsado = old ? old.montoReembolsado : undefined;
       item.historial.push({fecha:new Date().toISOString(), texto:"Datos editados"});
     } else {
-      item.historial.push({fecha:new Date().toISOString(), texto:"Prestación creada"});
+      if(item.tipoDocumento){
+        item.historial.push({fecha:new Date().toISOString(), texto:"Prestación creada a partir de un documento detectado como: "+(DOC_TYPES[item.tipoDocumento]||item.tipoDocumento)});
+      } else {
+        item.historial.push({fecha:new Date().toISOString(), texto:"Prestación creada"});
+      }
+      if(item.tipoDocumento === "comprobante_isapre" && item.estado === "pagada" && !item.montoReembolsado){
+        item.montoReembolsado = item.monto;
+      }
     }
     const nota = document.getElementById("fNota").value.trim();
     if(nota) item.historial.push({fecha:new Date().toISOString(), texto:nota});
@@ -949,7 +1292,7 @@ async function init(){
     toast("Prestación eliminada");
   });
 
-  ["filterEstado","filterCategoria"].forEach(id=>{
+  ["filterEstado","filterCategoria","filterTipoDoc"].forEach(id=>{
     document.getElementById(id).addEventListener("change", renderGrid);
   });
   document.getElementById("filterTexto").addEventListener("input", renderGrid);
