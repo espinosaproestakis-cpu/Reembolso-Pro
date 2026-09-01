@@ -150,6 +150,9 @@
     <select id="filterCategoria">
       <option value="">Todas las categorías</option>
     </select>
+    <select id="filterPaciente">
+      <option value="">Todos los pacientes</option>
+    </select>
     <select id="filterTipoDoc">
       <option value="">Todos los tipos de documento</option>
       <option value="boleta_medicamentos">Boleta de medicamentos</option>
@@ -210,6 +213,12 @@
       <div class="field">
         <label>Descripción del procedimiento</label>
         <input type="text" id="fDescripcion" placeholder="Ej: Consulta traumatólogo, radiografía rodilla..." required>
+      </div>
+      <div class="field">
+        <label>Paciente</label>
+        <select id="fPaciente">
+          <option value="">Sin especificar</option>
+        </select>
       </div>
       <div class="row2">
         <div class="field">
@@ -415,6 +424,7 @@ function migrateItem(item){
   if(item.requiereIsapre === undefined || item.requiereIsapre === null){
     item.requiereIsapre = item.categoria !== "Medicamentos";
   }
+  if(item.paciente === undefined || item.paciente === null) item.paciente = "";
   if(!item.isapre) item.isapre = nuevaEtapa();
   if(!item.seguro) item.seguro = nuevaEtapa({fechaPago:""});
   const legacy = item.estado;
@@ -542,6 +552,48 @@ const CATEGORY_BY_DOCTYPE = {
   otro: "Otro"
 };
 const MESES_ES = {enero:1,febrero:2,marzo:3,abril:4,mayo:5,junio:6,julio:7,agosto:8,septiembre:9,setiembre:9,octubre:10,noviembre:11,diciembre:12};
+
+/* ---------------- pacientes conocidos (para detección automática) ---------------- */
+const PACIENTES = [
+  { id:"irene", nombre:"Irene Beatriz Espinosa Proestakis", rut:"17433933-3" },
+  { id:"laura", nombre:"Laura Sofia Riveros Espinosa", rut:"29218340-2" },
+  { id:"jose",  nombre:"Jose Ignacio Riveros Padruno", rut:"17087927-9" }
+];
+function nombrePaciente(id){
+  const p = PACIENTES.find(p=>p.id===id);
+  return p ? p.nombre : "";
+}
+function normalizeRut(s){ return String(s||"").toUpperCase().replace(/[^0-9K]/g,""); }
+function normalizePacienteText(s){
+  // igual que normalizeText, más la corrección de un error común: "Espinoza" -> "Espinosa"
+  return normalizeText(s).replace(/\bespinoza\b/g, "espinosa");
+}
+function matchPacienteByRut(text){
+  const compact = String(text||"").toUpperCase().replace(/[^0-9K]/g,"");
+  for(const p of PACIENTES){
+    if(normalizeRut(p.rut) && compact.includes(normalizeRut(p.rut))) return p;
+  }
+  return null;
+}
+function matchPacienteByNombre(candidateText){
+  if(!candidateText) return null;
+  const candTokens = new Set(normalizePacienteText(candidateText).split(/[^a-z]+/).filter(w=>w.length>1));
+  let best = null, bestScore = 0;
+  for(const p of PACIENTES){
+    const nameTokens = normalizePacienteText(p.nombre).split(/\s+/).filter(Boolean);
+    let score = 0;
+    for(const t of nameTokens){ if(candTokens.has(t)) score++; }
+    if(score > bestScore){ bestScore = score; best = p; }
+  }
+  return (best && bestScore >= 2) ? best : null;
+}
+function matchPaciente(fullText, pacienteLabelText){
+  // Prioridad: el nombre específicamente etiquetado como paciente/beneficiario (más confiable
+  // cuando el documento tiene un titular de isapre distinto del paciente real) antes que el
+  // RUT que aparezca en cualquier parte del documento, y ese RUT antes que buscar el nombre
+  // en todo el texto como último recurso.
+  return matchPacienteByNombre(pacienteLabelText) || matchPacienteByRut(fullText) || matchPacienteByNombre(fullText);
+}
 
 function setAnalyzingText(msg){
   const el = document.getElementById("analyzingText");
@@ -681,7 +733,7 @@ function extractLabeled(text, labelPatterns, stopWords){
         const sIdx = val.search(stopRe);
         if(sIdx > 0) val = val.slice(0, sIdx);
       }
-      val = val.replace(/\s{2,}/g," ").trim();
+      val = val.replace(/\s{2,}/g," ").trim().replace(/[\s\-–,:;]+$/,"");
       if(val) return val;
     }
   }
@@ -692,10 +744,11 @@ function extractPaciente(text){
     "nombre\\s*benef\\.?",
     "se[nñ]or\\(es\\)",
     "se[nñ]or\\(as\\)",
+    "sr\\(a\\)\\.?",
     "paciente",
     "nombre\\s*paciente",
     "nombre\\s*afiliado",
-  ], ["rut","r\\.u\\.t","c[oó]digo","nombre\\s*benef","direcci[oó]n","tel[eé]fono","f\\.\\s*emisi[oó]n","fecha"]);
+  ], ["rut","r\\.u\\.t","c[oó]digo","nombre\\s*benef","direcci[oó]n","tel[eé]fono","f\\.\\s*emisi[oó]n","fecha","cliente"]);
 }
 function firstNonEmptyLine(text){
   const skipWords = /^(boleta|receta|comprobante|solicitud|folio|rp\b|prescripci[oó]n)/i;
@@ -752,13 +805,17 @@ function classifyAndExtract(text){
   for(const [k,v] of Object.entries(scores)){
     if(v > bestScore){ best = k; bestScore = v; }
   }
+  const pacienteTexto = extractPaciente(text);
+  const pacienteMatch = matchPaciente(text, pacienteTexto);
   return {
     tipoDocumento: best,
     tipoDocumentoLabel: DOC_TYPES[best],
     confianza: bestScore,
     fecha: extractFecha(text),
     monto: extractMonto(text),
-    paciente: extractPaciente(text),
+    paciente: pacienteTexto,
+    pacienteId: pacienteMatch ? pacienteMatch.id : "",
+    pacienteNombre: pacienteMatch ? pacienteMatch.nombre : null,
     prestador: extractPrestador(text),
     numeroBoleta: extractNumeroBoleta(text),
     detalle: extractDetalle(text, best)
@@ -839,11 +896,13 @@ function filteredItems(){
   const estado = document.getElementById("filterEstado").value;
   const categoria = document.getElementById("filterCategoria").value;
   const tipoDoc = document.getElementById("filterTipoDoc").value;
+  const paciente = document.getElementById("filterPaciente").value;
   const texto = document.getElementById("filterTexto").value.trim().toLowerCase();
   return items
     .filter(i => !estado || computeEstadoGeneral(i)===estado)
     .filter(i => !categoria || i.categoria===categoria)
     .filter(i => !tipoDoc || i.tipoDocumento===tipoDoc)
+    .filter(i => !paciente || i.paciente===paciente)
     .filter(i => !texto || [i.prestador,i.numeroBoleta,i.descripcion].join(" ").toLowerCase().includes(texto))
     .sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||"") || (b.creado||0)-(a.creado||0));
 }
@@ -875,7 +934,7 @@ function renderGrid(){
             <div class="desc">${escapeHtml(item.descripcion||"(sin descripción)")}</div>
             <span class="badge ${est.cls}">${est.label}</span>
           </div>
-          <div class="meta">${escapeHtml(item.categoria||"Otro")} · ${fmtDate(item.fecha)}</div>
+          <div class="meta">${escapeHtml(item.categoria||"Otro")} · ${fmtDate(item.fecha)}${item.paciente?(" · "+escapeHtml(nombrePaciente(item.paciente))):""}</div>
           <div class="meta">${escapeHtml(item.prestador||"Prestador no indicado")}${item.numeroBoleta?(" · N° "+escapeHtml(item.numeroBoleta)):""}</div>
           <div class="amount">${fmtCLP(item.monto)}</div>
           <div>
@@ -960,6 +1019,7 @@ function openForm(item, autofill){
   document.getElementById("fPrestador").value = item ? item.prestador : ((g && g.prestador) || "");
   document.getElementById("fBoleta").value = item ? item.numeroBoleta : ((g && g.numeroBoleta) || "");
   document.getElementById("fMonto").value = item ? item.monto : ((g && g.monto) || "");
+  document.getElementById("fPaciente").value = item ? (item.paciente || "") : ((g && g.pacienteId) || "");
   document.getElementById("fRequiereIsapre").checked = item
     ? !!item.requiereIsapre
     : (esComprobanteIsapre ? false : categoria !== "Medicamentos");
@@ -969,10 +1029,11 @@ function openForm(item, autofill){
   document.getElementById("formOverlay").classList.add("show");
 
   if(g){
+    const pacienteTxt = g.pacienteNombre ? ` · Paciente: ${g.pacienteNombre}` : "";
     toast(esComprobanteIsapre
       ? `Detecté un comprobante de reembolso Isapre — revisa la nota en la descripción`
       : (g.confianza>0
-        ? `Detecté: "${g.tipoDocumentoLabel}" — revisa y corrige los datos antes de guardar`
+        ? `Detecté: "${g.tipoDocumentoLabel}"${pacienteTxt} — revisa y corrige los datos antes de guardar`
         : `No pude identificar el documento con seguridad — completa los datos a mano`));
   }
 }
@@ -1055,6 +1116,7 @@ function openDetail(id){
 
   document.getElementById("detailBody").innerHTML = `
     <div class="meta" style="margin-bottom:4px;">${escapeHtml(item.categoria)} · ${fmtDate(item.fecha)} · ${escapeHtml(item.prestador||"-")}</div>
+    <div class="meta" style="margin-bottom:4px;">Paciente: <b>${escapeHtml(nombrePaciente(item.paciente) || "Sin especificar")}</b></div>
     <div class="meta" style="margin-bottom:10px;">N° boleta: ${escapeHtml(item.numeroBoleta||"-")} · Monto boleta: <b>${fmtCLP(item.monto)}</b></div>
     <div class="detail-photos">${fotosHtml}</div>
     <div style="margin:12px 0;"><span class="badge ${est.cls}">${est.label}</span></div>
@@ -1133,7 +1195,7 @@ function slug(s){
 async function buildAndDownloadZip(selected, opts){
   const zip = new JSZip();
   const carpeta = zip.folder(opts.folderPrefix + "_" + new Date().toISOString().slice(0,10));
-  let csv = "Fecha,Categoria,Prestador,N Boleta,Descripcion,Monto,Estado\n";
+  let csv = "Fecha,Paciente,Categoria,Prestador,N Boleta,Descripcion,Monto,Estado\n";
   let totalMonto = 0;
 
   selected.forEach((item, idx)=>{
@@ -1143,10 +1205,10 @@ async function buildAndDownloadZip(selected, opts){
       carpeta.file(`${base}_foto${fi+1}.jpg`, base64, {base64:true});
     });
     const estLabel = (ESTADO_GENERAL[computeEstadoGeneral(item)]||{}).label || "";
-    csv += [item.fecha, item.categoria, item.prestador, item.numeroBoleta, `"${(item.descripcion||"").replace(/"/g,'""')}"`, item.monto||0, estLabel].join(",") + "\n";
+    csv += [item.fecha, nombrePaciente(item.paciente), item.categoria, item.prestador, item.numeroBoleta, `"${(item.descripcion||"").replace(/"/g,'""')}"`, item.monto||0, estLabel].join(",") + "\n";
     totalMonto += Number(item.monto)||0;
   });
-  csv += `\nTOTAL,,,,,${totalMonto},\n`;
+  csv += `\nTOTAL,,,,,,${totalMonto},\n`;
   carpeta.file(opts.csvName, csv);
   carpeta.file("LEEME.txt", opts.readmeText(selected.length, totalMonto));
 
@@ -1417,8 +1479,15 @@ function checkStorage(){
   banner.innerHTML = "Tus prestaciones y fotos se guardan automáticamente en este navegador. Si estás viendo esta app dentro de una vista previa de chat, los datos pueden no persistir — ábrela en su propia pestaña (o en tu sitio de GitHub Pages) para que el guardado funcione siempre.";
 }
 
+function poblarSelectsPacientes(){
+  const opciones = PACIENTES.map(p=>`<option value="${p.id}">${escapeHtml(p.nombre)}</option>`).join("");
+  document.getElementById("fPaciente").innerHTML = '<option value="">Sin especificar</option>' + opciones;
+  document.getElementById("filterPaciente").innerHTML = '<option value="">Todos los pacientes</option>' + opciones;
+}
+
 async function init(){
   checkStorage();
+  poblarSelectsPacientes();
   try{
     db = await openDB();
     await loadItems();
@@ -1460,6 +1529,7 @@ async function init(){
       numeroBoleta: document.getElementById("fBoleta").value.trim(),
       monto: Number(document.getElementById("fMonto").value)||0,
       requiereIsapre: document.getElementById("fRequiereIsapre").checked,
+      paciente: document.getElementById("fPaciente").value,
       fotos: pendingFotos,
       tipoDocumento: pendingTipoDocumento || null,
       historial: [],
@@ -1503,7 +1573,7 @@ async function init(){
     toast("Prestación eliminada");
   });
 
-  ["filterEstado","filterCategoria","filterTipoDoc"].forEach(id=>{
+  ["filterEstado","filterCategoria","filterTipoDoc","filterPaciente"].forEach(id=>{
     document.getElementById(id).addEventListener("change", renderGrid);
   });
   document.getElementById("filterTexto").addEventListener("input", renderGrid);
