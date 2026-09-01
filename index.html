@@ -233,6 +233,20 @@
       </div>
       <div class="row2">
         <div class="field">
+          <label>Doctor / profesional</label>
+          <input type="text" id="fDoctor" placeholder="Ej: Heather Strain">
+        </div>
+        <div class="field">
+          <label>RUT del doctor</label>
+          <input type="text" id="fRutDoctor" placeholder="Ej: 8.719.989-4">
+        </div>
+      </div>
+      <div class="field">
+        <label>Tipo de consulta / especialidad</label>
+        <input type="text" id="fTipoConsulta" placeholder="Ej: Pediátrica, Traumatología...">
+      </div>
+      <div class="row2">
+        <div class="field">
           <label>Monto pagado (CLP)</label>
           <input type="number" id="fMonto" min="0" step="1" placeholder="0">
         </div>
@@ -426,6 +440,9 @@ function migrateItem(item){
     item.requiereIsapre = item.categoria !== "Medicamentos";
   }
   if(item.paciente === undefined || item.paciente === null) item.paciente = "";
+  if(item.doctor === undefined || item.doctor === null) item.doctor = "";
+  if(item.rutDoctor === undefined || item.rutDoctor === null) item.rutDoctor = "";
+  if(item.tipoConsulta === undefined || item.tipoConsulta === null) item.tipoConsulta = "";
   if(!item.isapre) item.isapre = nuevaEtapa();
   if(!item.seguro) item.seguro = nuevaEtapa({fechaPago:""});
   const legacy = item.estado;
@@ -700,6 +717,12 @@ function extractFecha(text){
     const mes = MESES_ES[normalizeText(m[2])];
     if(mes) return `${m[3]}-${pad2(mes)}-${pad2(m[1])}`;
   }
+  // formato ISO (aaaa-mm-dd), común en boletas electrónicas
+  m = text.match(/\b(20\d{2})[\/\-]([01]?\d)[\/\-]([0-3]?\d)\b/);
+  if(m){
+    const mm=parseInt(m[2],10), dd=parseInt(m[3],10);
+    if(dd>=1 && dd<=31 && mm>=1 && mm<=12) return `${m[1]}-${pad2(mm)}-${pad2(dd)}`;
+  }
   m = text.match(/\b([0-3]?\d)[\/\-]([01]?\d)[\/\-](20\d{2})\b/);
   if(m){
     const dd=parseInt(m[1],10), mm=parseInt(m[2],10);
@@ -764,13 +787,16 @@ function extractPrestador(text){
 }
 function extractNumeroBoleta(text){
   const raw = extractLabeled(text, [
-    "boleta\\s*electr[oó]nica\\s*nro\\.?",
+    "boleta\\s*(?:exenta\\s*)?electr[oó]nica\\s*(?:nro\\.?|n[uú]mero)",
     "folio\\s*:?",
     "n\\s*[°º]\\s*",
   ], ["fecha","valido","rut","nro\\.\\s*pam"]);
   if(!raw) return null;
   const m = raw.match(/^[\w.\-\/]+/);
-  return m ? m[0] : raw.slice(0,20);
+  let val = m ? m[0] : raw.slice(0,20);
+  // si es un número puro con puntos de miles (ej. "63.768"), lo deja limpio como "63768"
+  if(/^\d{1,3}(\.\d{3})+$/.test(val)) val = val.replace(/\./g,"");
+  return val;
 }
 function extractDetalle(text, tipo){
   if(tipo === "boleta_kinesiologia"){
@@ -800,26 +826,44 @@ const ISAPRES_LABEL = {
   banmedica:"Banmédica", "cruz blanca":"Cruz Blanca", consalud:"Consalud", colmena:"Colmena",
   "vida tres":"Vida Tres", "nueva masvida":"Nueva MasVida", masvida:"Nueva MasVida", fonasa:"Fonasa"
 };
+// Se usan raíces sin terminar la palabra (p.ej. "pediatr" en vez de "pediatria") para que coincida
+// tanto con la forma sustantivo ("Pediatría") como con la forma adjetivo que suele aparecer en el
+// "Giro" de boletas médicas ("Atención Médica Pediátrica").
 const ESPECIALIDADES = [
-  "traumatologia","psiquiatria","endocrinologia","dermatologia","cardiologia","pediatria",
-  "ginecologia","oftalmologia","otorrino","urologia","neurologia","gastroenterologia",
-  "oncologia","reumatologia","fisiatria","nutriologia","medicina familiar","medicina general"
+  "traumatolog","psiquiatr","endocrinolog","dermatolog","cardiolog","pediatr",
+  "ginecolog","oftalmolog","otorrino","urolog","neurolog","gastroenterolog",
+  "oncolog","reumatolog","fisiatr","nutriolog","medicina familiar","medicina general"
 ];
 const ESPECIALIDADES_LABEL = {
-  traumatologia:"Traumatología", psiquiatria:"Psiquiatría", endocrinologia:"Endocrinología",
-  dermatologia:"Dermatología", cardiologia:"Cardiología", pediatria:"Pediatría",
-  ginecologia:"Ginecología", oftalmologia:"Oftalmología", otorrino:"Otorrino",
-  urologia:"Urología", neurologia:"Neurología", gastroenterologia:"Gastroenterología",
-  oncologia:"Oncología", reumatologia:"Reumatología", fisiatria:"Fisiatría",
-  nutriologia:"Nutriología", "medicina familiar":"Medicina Familiar", "medicina general":"Medicina General"
+  traumatolog:"Traumatología", psiquiatr:"Psiquiatría", endocrinolog:"Endocrinología",
+  dermatolog:"Dermatología", cardiolog:"Cardiología", pediatr:"Pediatría",
+  ginecolog:"Ginecología", oftalmolog:"Oftalmología", otorrino:"Otorrino",
+  urolog:"Urología", neurolog:"Neurología", gastroenterolog:"Gastroenterología",
+  oncolog:"Oncología", reumatolog:"Reumatología", fisiatr:"Fisiatría",
+  nutriolog:"Nutriología", "medicina familiar":"Medicina Familiar", "medicina general":"Medicina General"
 };
 
-// Busca "Dr." / "Dra." seguido de un nombre propio y devuelve esa palabra (normalmente el apellido,
-// que es como suelen firmar las recetas/órdenes chilenas: "Dr. Alomar", "Dra. Pérez"). Si no lo
-// encuentra, usa el último token del prestador (campo "prestador") como respaldo.
+// Busca "Dr." / "Dra." seguido del nombre del profesional, restringido a la misma línea (para no
+// "engancharse" con la línea siguiente del documento). Captura hasta 3 palabras con mayúscula inicial.
+function extractNombreDoctorMatch(text){
+  const m = text.match(/\bDra?\.?[ \t]+((?:[A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ'’-]+[ \t]*){1,3})/);
+  if(!m) return null;
+  return { nombre: m[1].trim().replace(/[ \t]+/g," "), index: m.index, matchLen: m[0].length };
+}
+// Nombre completo del doctor tal como aparece (ej. "Heather Strain"), para el campo "Doctor".
+function extractNombreDoctor(text){
+  const m = extractNombreDoctorMatch(text);
+  return m ? m.nombre : null;
+}
+// Apellido del doctor (última palabra del nombre encontrado), que es como se firman habitualmente
+// las recetas/órdenes chilenas y lo que se usa en la nomenclatura de archivos ("Dr. Alomar", "Dr. Strain").
+// Si no encuentra "Dr./Dra." en el texto, usa el último token del prestador como respaldo.
 function extractApellidoDoctor(text, prestadorFallback){
-  const m = text.match(/\bDra?\.?\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{2,})/);
-  if(m) return m[1];
+  const m = extractNombreDoctorMatch(text);
+  if(m){
+    const tokens = m.nombre.split(/\s+/).filter(Boolean);
+    if(tokens.length) return tokens[tokens.length-1];
+  }
   // Solo usa el prestador como respaldo si parece un nombre real (sin dígitos ni paréntesis,
   // que delatarían que en realidad capturamos una línea de texto genérica del documento).
   if(prestadorFallback && !/[\d()]/.test(prestadorFallback)){
@@ -827,6 +871,31 @@ function extractApellidoDoctor(text, prestadorFallback){
     if(tokens.length) return tokens[tokens.length-1];
   }
   return null;
+}
+// Busca un RUT cerca de la mención "Dr./Dra. <nombre>" (misma zona del documento); si no hay,
+// prueba con una etiqueta explícita ("RUT médico") y, como último recurso, "REF. VENDEDOR" —
+// convención frecuente en boletas de médicos particulares (SPA unipersonal) donde el "vendedor" es el propio doctor.
+function extractRutDoctor(text){
+  const RUT_RE = /(\d{1,2}\.?\d{3}\.?\d{3}[-\.]?[\dkK])/;
+  const nm = extractNombreDoctorMatch(text);
+  if(nm){
+    const tail = text.slice(nm.index, nm.index + nm.matchLen + 80);
+    const m = tail.match(RUT_RE);
+    if(m) return m[1];
+  }
+  let labeled = extractLabeled(text, ["rut\\s*(?:del\\s*)?m[eé]dico","rut\\s*doctor"], ["fecha","nombre"]);
+  if(labeled){ const m = labeled.match(RUT_RE); if(m) return m[1]; }
+  labeled = extractLabeled(text, ["ref\\.?\\s*vendedor"], ["fecha","nombre"]);
+  if(labeled){ const m = labeled.match(RUT_RE); if(m) return m[1]; }
+  return null;
+}
+// El "Giro" de una boleta médica suele describir el tipo de atención (ej. "Atención Médica
+// Pediátrica"). Si coincide con una especialidad conocida devuelve esa etiqueta; si no, devuelve
+// el texto del giro tal cual, para que el usuario lo revise.
+function extractGiroTipoConsulta(text){
+  const raw = extractLabeled(text, ["giro"], ["direcci[oó]n","fono","tel[eé]fono","rut"]);
+  if(!raw) return null;
+  return extractEspecialidad(raw) || raw.replace(/\s{2,}/g," ").trim();
 }
 function extractNumeroReembolso(text){
   const raw = extractLabeled(text, [
@@ -931,6 +1000,9 @@ function classifyAndExtract(text){
   const prestador = extractPrestador(text);
   const numeroBoleta = extractNumeroBoleta(text);
   const detalle = extractDetalle(text, best);
+  const doctor = extractNombreDoctor(text);
+  const rutDoctor = extractRutDoctor(text);
+  const tipoConsulta = extractGiroTipoConsulta(text);
   const nombreArchivo = generarNombreDocumento(best, text, {fecha, monto, prestador, numeroBoleta});
   return {
     tipoDocumento: best,
@@ -944,6 +1016,9 @@ function classifyAndExtract(text){
     prestador,
     numeroBoleta,
     detalle,
+    doctor,
+    rutDoctor,
+    tipoConsulta,
     nombreArchivo
   };
 }
@@ -1145,6 +1220,9 @@ function openForm(item, autofill){
       : (nombreSugerido || (g && (g.detalle || g.tipoDocumentoLabel)) || ""));
   document.getElementById("fPrestador").value = item ? item.prestador : ((g && g.prestador) || "");
   document.getElementById("fBoleta").value = item ? item.numeroBoleta : ((g && g.numeroBoleta) || "");
+  document.getElementById("fDoctor").value = item ? (item.doctor||"") : ((g && g.doctor) || "");
+  document.getElementById("fRutDoctor").value = item ? (item.rutDoctor||"") : ((g && g.rutDoctor) || "");
+  document.getElementById("fTipoConsulta").value = item ? (item.tipoConsulta||"") : ((g && g.tipoConsulta) || "");
   document.getElementById("fMonto").value = item ? item.monto : ((g && g.monto) || "");
   document.getElementById("fPaciente").value = item ? (item.paciente || "") : ((g && g.pacienteId) || "");
   document.getElementById("fRequiereIsapre").checked = item
@@ -1244,6 +1322,7 @@ function openDetail(id){
   document.getElementById("detailBody").innerHTML = `
     <div class="meta" style="margin-bottom:4px;">${escapeHtml(item.categoria)} · ${fmtDate(item.fecha)} · ${escapeHtml(item.prestador||"-")}</div>
     <div class="meta" style="margin-bottom:4px;">Paciente: <b>${escapeHtml(nombrePaciente(item.paciente) || "Sin especificar")}</b></div>
+    ${(item.doctor || item.rutDoctor || item.tipoConsulta) ? `<div class="meta" style="margin-bottom:4px;">${item.doctor?("Doctor: <b>"+escapeHtml(item.doctor)+"</b>"):""}${item.rutDoctor?(" · RUT: "+escapeHtml(item.rutDoctor)):""}${item.tipoConsulta?(" · "+escapeHtml(item.tipoConsulta)):""}</div>` : ""}
     <div class="meta" style="margin-bottom:10px;">N° boleta: ${escapeHtml(item.numeroBoleta||"-")} · Monto boleta: <b>${fmtCLP(item.monto)}</b></div>
     <div class="detail-photos">${fotosHtml}</div>
     <div style="margin:12px 0;"><span class="badge ${est.cls}">${est.label}</span></div>
@@ -1322,7 +1401,7 @@ function slug(s){
 async function buildAndDownloadZip(selected, opts){
   const zip = new JSZip();
   const carpeta = zip.folder(opts.folderPrefix + "_" + new Date().toISOString().slice(0,10));
-  let csv = "Fecha,Paciente,Categoria,Prestador,N Boleta,Descripcion,Monto,Estado\n";
+  let csv = "Fecha,Paciente,Categoria,Prestador,Doctor,RUT Doctor,Tipo Consulta,N Boleta,Descripcion,Monto,Estado\n";
   let totalMonto = 0;
 
   selected.forEach((item, idx)=>{
@@ -1334,7 +1413,7 @@ async function buildAndDownloadZip(selected, opts){
       carpeta.file(`${base}_foto${fi+1}.jpg`, base64, {base64:true});
     });
     const estLabel = (ESTADO_GENERAL[computeEstadoGeneral(item)]||{}).label || "";
-    csv += [fmtDate(item.fecha), nombrePaciente(item.paciente), item.categoria, item.prestador, item.numeroBoleta, `"${(item.descripcion||"").replace(/"/g,'""')}"`, item.monto||0, estLabel].join(",") + "\n";
+    csv += [fmtDate(item.fecha), nombrePaciente(item.paciente), item.categoria, item.prestador, item.doctor||"", item.rutDoctor||"", item.tipoConsulta||"", item.numeroBoleta, `"${(item.descripcion||"").replace(/"/g,'""')}"`, item.monto||0, estLabel].join(",") + "\n";
     totalMonto += Number(item.monto)||0;
   });
   csv += `\nTOTAL,,,,,,${totalMonto},\n`;
@@ -1656,6 +1735,9 @@ async function init(){
       descripcion: document.getElementById("fDescripcion").value.trim(),
       prestador: document.getElementById("fPrestador").value.trim(),
       numeroBoleta: document.getElementById("fBoleta").value.trim(),
+      doctor: document.getElementById("fDoctor").value.trim(),
+      rutDoctor: document.getElementById("fRutDoctor").value.trim(),
+      tipoConsulta: document.getElementById("fTipoConsulta").value.trim(),
       monto: Number(document.getElementById("fMonto").value)||0,
       requiereIsapre: document.getElementById("fRequiereIsapre").checked,
       paciente: document.getElementById("fPaciente").value,
