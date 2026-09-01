@@ -46,18 +46,20 @@
   .toolbar input[type=text]{flex:1;min-width:160px;}
   .spacer{flex:1;}
 
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;}
-  .card .thumbs{display:flex;height:130px;background:#eef1f4;}
-  .card .thumbs img{flex:1;object-fit:cover;height:100%;width:100%;border-right:1px solid #fff;}
-  .card .thumbs .more{flex:0 0 46px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted);background:#e4e8ec;}
-  .card .thumbs .empty{flex:1;display:flex;align-items:center;justify-content:center;color:#a7b0ba;font-size:12px;}
-  .card .body{padding:14px 14px 12px;display:flex;flex-direction:column;gap:6px;flex:1;}
-  .card .top-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
-  .card .desc{font-weight:600;font-size:14.5px;line-height:1.3;}
-  .card .meta{font-size:12.5px;color:var(--muted);}
-  .card .amount{font-size:15px;font-weight:700;margin-top:2px;}
-  .card .foot{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-top:1px solid var(--line);}
+  .list{display:flex;flex-direction:column;gap:8px;}
+  .row-item{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:10px 14px;display:flex;align-items:center;gap:12px;position:relative;}
+  .row-item .row-check{width:18px;height:18px;flex:0 0 auto;}
+  .row-item .row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+  .row-item .row-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .row-item .row-desc{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px;}
+  .row-item .row-meta{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .row-item .row-tags{display:flex;gap:4px;flex-wrap:wrap;}
+  .row-item .row-amount{font-weight:700;font-size:14px;white-space:nowrap;flex:0 0 auto;}
+  .row-item .row-actions{flex:0 0 auto;}
+  @media (max-width:640px){
+    .row-item{flex-wrap:wrap;}
+    .row-item .row-desc{max-width:100%;white-space:normal;}
+  }
 
   .badge{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;white-space:nowrap;}
   .badge.pendiente{background:var(--gray-bg);color:var(--muted);}
@@ -91,6 +93,8 @@
 
   .detail-photos{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;}
   .detail-photos img{width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;}
+  .detail-photos .photo-wrap{position:relative;display:inline-block;}
+  .detail-photos .rm-foto{position:absolute;top:-6px;right:-6px;background:rgba(0,0,0,.65);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;line-height:1;padding:0;cursor:pointer;}
   .timeline{list-style:none;padding:0;margin:10px 0 0;border-left:2px solid var(--line);}
   .timeline li{padding:0 0 12px 14px;position:relative;font-size:12.5px;}
   .timeline li::before{content:"";position:absolute;left:-6px;top:3px;width:9px;height:9px;border-radius:50%;background:var(--primary);}
@@ -169,9 +173,10 @@
     <button class="btn-secondary btn-sm" id="btnSelectMode">Seleccionar</button>
     <button class="btn-primary btn-sm" id="btnExportZipIsapre" disabled>📦 Carpeta para Isapre (0)</button>
     <button class="btn-primary btn-sm" id="btnExportZipSeguro" disabled>📦 Carpeta para el Seguro (0)</button>
+    <button class="btn-secondary btn-sm" id="btnLimpiarFinalizados" disabled title="Elimina las fotos/documentos de prestaciones ya finalizadas por el seguro, conservando todos los datos">🧹 Liberar espacio (0)</button>
   </div>
 
-  <div class="grid" id="grid"></div>
+  <div class="list" id="grid"></div>
   <div class="empty-state" id="emptyState" style="display:none;">
     <div class="big">📄</div>
     <div>Aún no registras prestaciones.</div>
@@ -252,8 +257,8 @@
         </div>
         <div class="field">
           <label style="display:flex;align-items:center;gap:6px;height:32px;">
-            <input type="checkbox" id="fRequiereIsapre" style="width:auto;">
-            Pasa primero por la Isapre
+            <input type="checkbox" id="fDirectoSeguro" style="width:auto;">
+            Pasar directo a seguro (sin pasar por isapre)
           </label>
         </div>
       </div>
@@ -1112,46 +1117,38 @@ function renderGrid(){
   const list = filteredItems();
   const grid = document.getElementById("grid");
   document.getElementById("emptyState").style.display = (items.length===0) ? "block" : "none";
-  grid.style.display = (items.length===0) ? "none" : "grid";
+  grid.style.display = (items.length===0) ? "none" : "flex";
 
+  // Vista compacta: una línea por prestación, sin miniaturas de fotos (para ocupar menos espacio).
+  // Las fotos/documentos se ven con el botón "Ver →", que abre el detalle.
   grid.innerHTML = list.map(item=>{
     const est = ESTADO_GENERAL[computeEstadoGeneral(item)] || ESTADO_GENERAL.pendiente;
-    const fotos = item.fotos || [];
-    let thumbsHtml;
-    if(fotos.length===0){
-      thumbsHtml = `<div class="empty">Sin foto</div>`;
-    } else {
-      const shown = fotos.slice(0,3);
-      thumbsHtml = shown.map(f=>`<img src="${f.dataUrl}" loading="lazy">`).join("");
-      if(fotos.length>3) thumbsHtml += `<div class="more">+${fotos.length-3}</div>`;
-    }
-    const checkbox = selectMode ? `<input type="checkbox" class="sel-check" data-id="${item.id}" ${selectedIds.has(item.id)?"checked":""} style="position:absolute;top:8px;left:8px;width:18px;height:18px;z-index:2;">` : "";
+    const nFotos = (item.fotos||[]).length;
+    const checkbox = selectMode ? `<input type="checkbox" class="sel-check row-check" data-id="${item.id}" ${selectedIds.has(item.id)?"checked":""}>` : "";
     return `
-      <div class="card" style="position:relative;" data-id="${item.id}">
+      <div class="row-item" data-id="${item.id}">
         ${checkbox}
-        <div class="thumbs">${thumbsHtml}</div>
-        <div class="body">
-          <div class="top-row">
-            <div class="desc">${escapeHtml(item.descripcion||"(sin descripción)")}</div>
+        <div class="row-main">
+          <div class="row-top">
+            <span class="row-desc">${escapeHtml(item.descripcion||"(sin descripción)")}</span>
             <span class="badge ${est.cls}">${est.label}</span>
           </div>
-          <div class="meta">${escapeHtml(item.categoria||"Otro")} · ${fmtDate(item.fecha)}${item.paciente?(" · "+escapeHtml(nombrePaciente(item.paciente))):""}</div>
-          <div class="meta">${escapeHtml(item.prestador||"Prestador no indicado")}${item.numeroBoleta?(" · N° "+escapeHtml(item.numeroBoleta)):""}</div>
-          <div class="amount">${fmtCLP(item.monto)}</div>
-          <div>
+          <div class="row-meta">${escapeHtml(item.categoria||"Otro")} · ${fmtDate(item.fecha)}${item.paciente?(" · "+escapeHtml(nombrePaciente(item.paciente))):""} · ${escapeHtml(item.prestador||"Prestador no indicado")}${item.numeroBoleta?(" · N° "+escapeHtml(item.numeroBoleta)):""}</div>
+          <div class="row-tags">
             ${item.tipoDocumento ? `<span class="doctype-badge">📄 ${escapeHtml(DOC_TYPES[item.tipoDocumento]||item.tipoDocumento)}</span>` : ""}
             ${(!item.requiereIsapre && item.tipoDocumento!=="comprobante_isapre") ? `<span class="doctype-badge low">→ directo a seguro</span>` : ""}
+            ${nFotos ? `<span class="doctype-badge low">🖼️ ${nFotos} documento${nFotos>1?"s":""}</span>` : `<span class="doctype-badge low">Sin foto</span>`}
+            ${esCandidatoLimpieza(item) ? `<span class="doctype-badge low">🗑️ liberar espacio</span>` : ""}
           </div>
         </div>
-        <div class="foot">
-          <button class="btn-ghost btn-sm open-detail" data-id="${item.id}">Ver / seguimiento →</button>
-        </div>
+        <div class="row-amount">${fmtCLP(item.monto)}</div>
+        <div class="row-actions"><button class="btn-ghost btn-sm open-detail" data-id="${item.id}">Ver →</button></div>
       </div>
     `;
   }).join("");
 
   grid.querySelectorAll(".open-detail").forEach(btn=>{
-    btn.addEventListener("click", ()=> openDetail(btn.dataset.id));
+    btn.addEventListener("click", (e)=>{ e.stopPropagation(); openDetail(btn.dataset.id); });
   });
   grid.querySelectorAll(".sel-check").forEach(cb=>{
     cb.addEventListener("click", (e)=>{
@@ -1161,10 +1158,10 @@ function renderGrid(){
       updateExportButton();
     });
   });
-  grid.querySelectorAll(".card").forEach(card=>{
-    card.addEventListener("click", (e)=>{
+  grid.querySelectorAll(".row-item").forEach(row=>{
+    row.addEventListener("click", (e)=>{
       if(selectMode && !e.target.classList.contains("open-detail")){
-        const cb = card.querySelector(".sel-check");
+        const cb = row.querySelector(".sel-check");
         if(cb && e.target!==cb){ cb.checked = !cb.checked; cb.dispatchEvent(new Event("click",{bubbles:true})); }
       }
     });
@@ -1193,11 +1190,44 @@ function updateExportButton(){
   btnS.disabled = nSeguro===0;
 }
 
+/* ---------------- liberar espacio: prestaciones ya finalizadas ---------------- */
+// Una prestación es candidata a que se eliminen sus fotos (no sus datos) cuando el seguro ya
+// aprobó y pagó el reembolso — el documento ya cumplió su función y solo ocupa espacio local.
+function esCandidatoLimpieza(item){
+  return item.tipoDocumento !== "comprobante_isapre"
+    && computeEstadoGeneral(item) === "finalizado"
+    && (item.fotos||[]).length > 0;
+}
+async function limpiarFotosItem(item){
+  const n = (item.fotos||[]).length;
+  item.fotos = [];
+  item.historial = item.historial || [];
+  item.historial.push({fecha:new Date().toISOString(), texto:`Se eliminaron ${n} foto(s)/documento(s) adjuntos para liberar espacio (reembolso ya finalizado) — se conservan todos los datos.`});
+  await dbPut(item);
+}
+async function limpiarEspacioFinalizados(){
+  const candidatos = items.filter(esCandidatoLimpieza);
+  if(candidatos.length === 0){ toast("No hay documentos de prestaciones finalizadas para liberar"); return; }
+  const totalFotos = candidatos.reduce((acc,i)=>acc+(i.fotos||[]).length,0);
+  if(!confirm(`¿Eliminar ${totalFotos} foto(s)/documento(s) de ${candidatos.length} prestación(es) ya finalizadas (aprobadas y pagadas por el seguro)?\n\nSe conservan todos los datos (montos, fechas, estados) para tus métricas — solo se eliminan las imágenes/PDF adjuntos para liberar espacio. Esta acción no se puede deshacer.`)) return;
+  for(const item of candidatos){ await limpiarFotosItem(item); }
+  await loadItems();
+  toast(`Se liberaron las fotos de ${candidatos.length} prestación(es)`);
+}
+function updateLimpiarButton(){
+  const btn = document.getElementById("btnLimpiarFinalizados");
+  if(!btn) return;
+  const n = items.filter(esCandidatoLimpieza).length;
+  btn.textContent = `🧹 Liberar espacio (${n})`;
+  btn.disabled = n===0;
+}
+
 function renderAll(){
   renderStats();
   refreshCategoriaFilter();
   renderGrid();
   updateExportButton();
+  updateLimpiarButton();
 }
 
 /* ---------------- form (nueva / editar) ---------------- */
@@ -1225,9 +1255,10 @@ function openForm(item, autofill){
   document.getElementById("fTipoConsulta").value = item ? (item.tipoConsulta||"") : ((g && g.tipoConsulta) || "");
   document.getElementById("fMonto").value = item ? item.monto : ((g && g.monto) || "");
   document.getElementById("fPaciente").value = item ? (item.paciente || "") : ((g && g.pacienteId) || "");
-  document.getElementById("fRequiereIsapre").checked = item
-    ? !!item.requiereIsapre
-    : (esComprobanteIsapre ? false : categoria !== "Medicamentos");
+  // El checkbox se muestra invertido ("Pasar directo a seguro"): marcado = NO pasa por isapre.
+  document.getElementById("fDirectoSeguro").checked = item
+    ? !item.requiereIsapre
+    : (esComprobanteIsapre ? true : categoria === "Medicamentos");
   document.getElementById("fNota").value = "";
   renderPreviewThumbs();
   renderDocTypeHint();
@@ -1291,7 +1322,13 @@ function openDetail(id){
   const eg = computeEstadoGeneral(item);
   const est = ESTADO_GENERAL[eg] || ESTADO_GENERAL.pendiente;
   document.getElementById("detailTitle").textContent = item.descripcion || "Detalle de prestación";
-  const fotosHtml = (item.fotos||[]).map(f=>`<img src="${f.dataUrl}" class="lb-open" data-src="${f.dataUrl}">`).join("") || "<div style='color:#999;font-size:12.5px;'>Sin fotos adjuntas</div>";
+  const fotos = item.fotos || [];
+  const fotosHtml = fotos.length ? fotos.map((f,fi)=>`
+      <div class="photo-wrap">
+        <img src="${f.dataUrl}" class="lb-open" data-src="${f.dataUrl}">
+        <button type="button" class="rm-foto" data-idx="${fi}" title="Eliminar este documento">✕</button>
+      </div>
+    `).join("") : "<div style='color:#999;font-size:12.5px;'>Sin fotos adjuntas</div>";
   const historial = (item.historial||[]).slice().reverse();
   const historialHtml = historial.length ? `<ul class="timeline">${historial.map(h=>`<li><div class="d">${fmtDateTime(h.fecha)}</div>${escapeHtml(h.texto)}</li>`).join("")}</ul>` : "<div style='color:#999;font-size:12.5px;margin-top:6px;'>Sin movimientos registrados aún.</div>";
 
@@ -1300,12 +1337,19 @@ function openDetail(id){
   const seguro = item.seguro || nuevaEtapa({fechaPago:""});
   const seguroAtenuado = (item.requiereIsapre && isapre.estado !== "aprobada");
 
+  const limpiezaHtml = (!esReferencia && esCandidatoLimpieza(item)) ? `
+    <div class="banner" style="background:var(--amber-bg);color:var(--amber);border-color:#f5dcae;">
+      📦 Este reembolso ya está <b>finalizado</b> (aprobado y pagado por el seguro). Las ${fotos.length} foto(s)/documento(s) adjuntos ya cumplieron su función y son candidatos a eliminarse para liberar espacio — se conservan todos los datos (fechas, montos, estados) para tus métricas.
+      <div style="margin-top:8px;"><button type="button" class="btn-secondary btn-sm" id="btnLimpiarFotosItem">🗑️ Eliminar fotos adjuntas</button></div>
+    </div>
+  ` : "";
+
   const pipelineHtml = esReferencia ? `
     <div class="banner">📎 Este documento es un comprobante de reembolso de la isapre. Ábrelo desde la <b>prestación original</b> relacionada (Editar → marca la etapa Isapre como "Aprobada" y adjunta este archivo ahí) en vez de darle seguimiento aquí como una prestación aparte.</div>
   ` : `
     <div class="checkbox-row field">
-      <input type="checkbox" id="dRequiereIsapre" ${item.requiereIsapre?"checked":""}>
-      <label style="margin:0;font-weight:500;color:var(--ink);">Este reembolso pasa primero por la Isapre</label>
+      <input type="checkbox" id="dDirectoSeguro" ${item.requiereIsapre?"":"checked"}>
+      <label style="margin:0;font-weight:500;color:var(--ink);">Pasar directo a seguro (sin pasar por isapre)</label>
     </div>
 
     <div id="isapreBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${item.requiereIsapre?"":"opacity:.4;"}">
@@ -1327,6 +1371,7 @@ function openDetail(id){
     <div class="detail-photos">${fotosHtml}</div>
     <div style="margin:12px 0;"><span class="badge ${est.cls}">${est.label}</span></div>
 
+    ${limpiezaHtml}
     ${pipelineHtml}
 
     <div class="field">
@@ -1342,18 +1387,29 @@ function openDetail(id){
   `;
 
   if(!esReferencia){
-    const reqCb = document.getElementById("dRequiereIsapre");
-    reqCb.addEventListener("change", ()=>{
-      document.getElementById("isapreBox").style.opacity = reqCb.checked ? "1" : ".4";
+    const dirCb = document.getElementById("dDirectoSeguro");
+    dirCb.addEventListener("change", ()=>{
+      document.getElementById("isapreBox").style.opacity = dirCb.checked ? ".4" : "1";
+    });
+  }
+
+  const btnLimpiarItem = document.getElementById("btnLimpiarFotosItem");
+  if(btnLimpiarItem){
+    btnLimpiarItem.addEventListener("click", async ()=>{
+      if(!confirm(`¿Eliminar las ${fotos.length} foto(s) adjuntas de esta prestación? Se conservan todos los datos (fechas, montos, estados) para tus métricas. Esta acción no se puede deshacer.`)) return;
+      await limpiarFotosItem(item);
+      await loadItems();
+      toast("Fotos eliminadas — datos conservados");
+      openDetail(id);
     });
   }
 
   document.getElementById("btnAddNote").addEventListener("click", async ()=>{
     const cambios = [];
     if(!esReferencia){
-      const nuevoRequiere = document.getElementById("dRequiereIsapre").checked;
+      const nuevoRequiere = !document.getElementById("dDirectoSeguro").checked;
       if(nuevoRequiere !== !!item.requiereIsapre){
-        cambios.push(`"Pasa por isapre" cambiado a ${nuevoRequiere ? "sí" : "no"}`);
+        cambios.push(`"Pasar directo a seguro" cambiado a ${!nuevoRequiere ? "sí" : "no"}`);
         item.requiereIsapre = nuevoRequiere;
       }
       const nuevaIsapre = readEtapaFromForm("Isapre", false);
@@ -1384,6 +1440,22 @@ function openDetail(id){
     img.addEventListener("click", ()=>{
       document.getElementById("lightboxImg").src = img.dataset.src;
       document.getElementById("lightbox").classList.add("show");
+    });
+  });
+
+  document.getElementById("detailBody").querySelectorAll(".rm-foto").forEach(btn=>{
+    btn.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      if(!confirm("¿Eliminar esta foto/documento de la prestación? Esta acción no se puede deshacer.")) return;
+      const idx = Number(btn.dataset.idx);
+      item.fotos = item.fotos || [];
+      item.fotos.splice(idx,1);
+      item.historial = item.historial || [];
+      item.historial.push({fecha:new Date().toISOString(), texto:"Se eliminó un documento adjunto"});
+      await dbPut(item);
+      await loadItems();
+      toast("Documento eliminado");
+      openDetail(id);
     });
   });
 
@@ -1721,7 +1793,7 @@ async function init(){
   document.getElementById("lightbox").addEventListener("click", ()=>document.getElementById("lightbox").classList.remove("show"));
 
   document.getElementById("fCategoria").addEventListener("change", (e)=>{
-    if(!editingId){ document.getElementById("fRequiereIsapre").checked = e.target.value !== "Medicamentos"; }
+    if(!editingId){ document.getElementById("fDirectoSeguro").checked = e.target.value === "Medicamentos"; }
   });
   document.getElementById("dropZone").addEventListener("click", ()=>document.getElementById("fFotos").click());
   document.getElementById("fFotos").addEventListener("change", (e)=>handleFiles(e.target.files));
@@ -1739,7 +1811,7 @@ async function init(){
       rutDoctor: document.getElementById("fRutDoctor").value.trim(),
       tipoConsulta: document.getElementById("fTipoConsulta").value.trim(),
       monto: Number(document.getElementById("fMonto").value)||0,
-      requiereIsapre: document.getElementById("fRequiereIsapre").checked,
+      requiereIsapre: !document.getElementById("fDirectoSeguro").checked,
       paciente: document.getElementById("fPaciente").value,
       fotos: pendingFotos,
       tipoDocumento: pendingTipoDocumento || null,
@@ -1798,6 +1870,7 @@ async function init(){
   });
   document.getElementById("btnExportZipIsapre").addEventListener("click", exportZipIsapre);
   document.getElementById("btnExportZipSeguro").addEventListener("click", exportZipSeguro);
+  document.getElementById("btnLimpiarFinalizados").addEventListener("click", limpiarEspacioFinalizados);
 
   document.getElementById("btnBackup").addEventListener("click", backup);
   document.getElementById("btnRestore").addEventListener("click", ()=>document.getElementById("restoreInput").click());
@@ -1826,3 +1899,4 @@ init();
 </script>
 </body>
 </html>
+
