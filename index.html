@@ -139,13 +139,13 @@
   <div class="toolbar">
     <select id="filterEstado">
       <option value="">Todos los estados</option>
-      <option value="pendiente">Pendiente</option>
-      <option value="lista">Lista para enviar</option>
-      <option value="enviada">Enviada</option>
-      <option value="en_revision">En revisión</option>
-      <option value="aprobada">Aprobada</option>
-      <option value="rechazada">Rechazada</option>
-      <option value="pagada">Pagada</option>
+      <option value="pendiente">Pendiente de enviar</option>
+      <option value="en_isapre">En isapre (esperando)</option>
+      <option value="rechazada_isapre">Rechazado por isapre</option>
+      <option value="aprobada_isapre_pendiente_seguro">Aprobado isapre — enviar a seguro</option>
+      <option value="en_seguro">En el seguro (esperando)</option>
+      <option value="rechazada_seguro">Rechazado por el seguro</option>
+      <option value="finalizado">Finalizado (reembolsado)</option>
     </select>
     <select id="filterCategoria">
       <option value="">Todas las categorías</option>
@@ -163,7 +163,8 @@
     <input type="text" id="filterTexto" placeholder="Buscar por prestador, N° boleta o descripción...">
     <div class="spacer"></div>
     <button class="btn-secondary btn-sm" id="btnSelectMode">Seleccionar</button>
-    <button class="btn-primary btn-sm" id="btnExportZip" disabled>📦 Preparar carpeta para isapre (0)</button>
+    <button class="btn-primary btn-sm" id="btnExportZipIsapre" disabled>📦 Carpeta para Isapre (0)</button>
+    <button class="btn-primary btn-sm" id="btnExportZipSeguro" disabled>📦 Carpeta para el Seguro (0)</button>
   </div>
 
   <div class="grid" id="grid"></div>
@@ -226,16 +227,10 @@
           <input type="number" id="fMonto" min="0" step="1" placeholder="0">
         </div>
         <div class="field">
-          <label>Estado actual</label>
-          <select id="fEstado">
-            <option value="pendiente">Pendiente</option>
-            <option value="lista">Lista para enviar</option>
-            <option value="enviada">Enviada a isapre</option>
-            <option value="en_revision">En revisión</option>
-            <option value="aprobada">Aprobada</option>
-            <option value="rechazada">Rechazada</option>
-            <option value="pagada">Pagada</option>
-          </select>
+          <label style="display:flex;align-items:center;gap:6px;height:32px;">
+            <input type="checkbox" id="fRequiereIsapre" style="width:auto;">
+            Pasa primero por la Isapre
+          </label>
         </div>
       </div>
       <div class="field">
@@ -375,15 +370,122 @@ let selectMode = false;
 let selectedIds = new Set();
 let storageUsable = true;
 
-const ESTADOS = {
-  pendiente:{label:"Pendiente", cls:"pendiente"},
-  lista:{label:"Lista para enviar", cls:"lista"},
-  enviada:{label:"Enviada", cls:"enviada"},
-  en_revision:{label:"En revisión", cls:"en_revision"},
-  aprobada:{label:"Aprobada", cls:"aprobada"},
-  rechazada:{label:"Rechazada", cls:"rechazada"},
-  pagada:{label:"Pagada", cls:"pagada"}
+/* ---------------- flujo de dos etapas: Isapre -> Seguro complementario ---------------- */
+const ETAPA_ESTADOS = [
+  ["no_enviada","No enviada"],
+  ["enviada","Enviada — esperando resolución"],
+  ["aprobada","Aprobada"],
+  ["rechazada","Rechazada"]
+];
+const ESTADO_GENERAL = {
+  pendiente:{label:"Pendiente de enviar", cls:"pendiente"},
+  en_isapre:{label:"En isapre (esperando)", cls:"enviada"},
+  rechazada_isapre:{label:"Rechazado por isapre", cls:"rechazada"},
+  aprobada_isapre_pendiente_seguro:{label:"Aprobado isapre — enviar a seguro", cls:"lista"},
+  en_seguro:{label:"En el seguro (esperando)", cls:"en_revision"},
+  rechazada_seguro:{label:"Rechazado por el seguro", cls:"rechazada"},
+  finalizado:{label:"Finalizado (reembolsado)", cls:"pagada"},
+  referencia:{label:"Documento de respaldo", cls:"pendiente"}
 };
+function nuevaEtapa(extra){
+  return Object.assign({estado:"no_enviada", numeroReembolso:"", fechaEnvio:"", fechaResolucion:"", montoAprobado:null}, extra||{});
+}
+function computeEstadoGeneral(item){
+  if(item.tipoDocumento === "comprobante_isapre") return "referencia";
+  const isa = item.isapre || nuevaEtapa();
+  const seg = item.seguro || nuevaEtapa({fechaPago:""});
+  if(item.requiereIsapre){
+    if(isa.estado === "no_enviada") return "pendiente";
+    if(isa.estado === "enviada") return "en_isapre";
+    if(isa.estado === "rechazada") return "rechazada_isapre";
+    // aprobada
+    if(seg.estado === "no_enviada") return "aprobada_isapre_pendiente_seguro";
+    if(seg.estado === "enviada") return "en_seguro";
+    if(seg.estado === "rechazada") return "rechazada_seguro";
+    return "finalizado";
+  } else {
+    if(seg.estado === "no_enviada") return "pendiente";
+    if(seg.estado === "enviada") return "en_seguro";
+    if(seg.estado === "rechazada") return "rechazada_seguro";
+    return "finalizado";
+  }
+}
+// Migra datos antiguos (de versiones previas de la app, con un solo campo "estado") al nuevo modelo de dos etapas.
+function migrateItem(item){
+  if(item.requiereIsapre === undefined || item.requiereIsapre === null){
+    item.requiereIsapre = item.categoria !== "Medicamentos";
+  }
+  if(!item.isapre) item.isapre = nuevaEtapa();
+  if(!item.seguro) item.seguro = nuevaEtapa({fechaPago:""});
+  const legacy = item.estado;
+  if(legacy){
+    if(legacy === "pagada"){
+      item.seguro.estado = "aprobada";
+      if(item.seguro.montoAprobado==null) item.seguro.montoAprobado = item.montoReembolsado || item.monto || null;
+      if(item.requiereIsapre && item.isapre.estado==="no_enviada") item.isapre.estado = "aprobada";
+    } else if(legacy === "aprobada"){
+      if(item.requiereIsapre && item.isapre.estado==="no_enviada") item.isapre.estado = "aprobada";
+    } else if(legacy === "rechazada"){
+      if(item.requiereIsapre && item.isapre.estado==="no_enviada") item.isapre.estado = "rechazada";
+      else if(!item.requiereIsapre && item.seguro.estado==="no_enviada") item.seguro.estado = "rechazada";
+    } else if(legacy === "enviada" || legacy === "en_revision" || legacy === "lista"){
+      if(item.requiereIsapre && item.isapre.estado==="no_enviada") item.isapre.estado = "enviada";
+      else if(!item.requiereIsapre && item.seguro.estado==="no_enviada") item.seguro.estado = "enviada";
+    }
+    delete item.estado;
+    delete item.montoReembolsado;
+  }
+  return item;
+}
+function etapaBoxHtml(prefix, etapa, opts){
+  opts = opts || {};
+  const estado = (etapa && etapa.estado) || "no_enviada";
+  return `
+    <div class="field">
+      <label>Estado</label>
+      <select id="d${prefix}Estado">
+        ${ETAPA_ESTADOS.map(([k,l])=>`<option value="${k}" ${estado===k?"selected":""}>${l}</option>`).join("")}
+      </select>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>N° de ${escapeHtml(opts.numLabel || "reembolso")}</label>
+        <input type="text" id="d${prefix}Numero" value="${escapeHtml((etapa&&etapa.numeroReembolso)||"")}" placeholder="Ej: 631661899">
+      </div>
+      <div class="field">
+        <label>Fecha de envío</label>
+        <input type="date" id="d${prefix}FechaEnvio" value="${(etapa&&etapa.fechaEnvio)||""}">
+      </div>
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>Fecha de resolución</label>
+        <input type="date" id="d${prefix}FechaResolucion" value="${(etapa&&etapa.fechaResolucion)||""}">
+      </div>
+      <div class="field">
+        <label>Monto aprobado (CLP)</label>
+        <input type="number" min="0" step="1" id="d${prefix}Monto" value="${(etapa&&etapa.montoAprobado)||""}">
+      </div>
+    </div>
+    ${opts.fechaPago ? `
+    <div class="field">
+      <label>Fecha de pago</label>
+      <input type="date" id="d${prefix}FechaPago" value="${(etapa&&etapa.fechaPago)||""}">
+    </div>` : ""}
+  `;
+}
+function readEtapaFromForm(prefix, conFechaPago){
+  const montoVal = document.getElementById(`d${prefix}Monto`).value;
+  const out = {
+    estado: document.getElementById(`d${prefix}Estado`).value,
+    numeroReembolso: document.getElementById(`d${prefix}Numero`).value.trim(),
+    fechaEnvio: document.getElementById(`d${prefix}FechaEnvio`).value,
+    fechaResolucion: document.getElementById(`d${prefix}FechaResolucion`).value,
+    montoAprobado: montoVal ? Number(montoVal) : null
+  };
+  if(conFechaPago) out.fechaPago = document.getElementById(`d${prefix}FechaPago`).value;
+  return out;
+}
 
 const fmtCLP = (n)=> new Intl.NumberFormat("es-CL",{style:"currency",currency:"CLP",maximumFractionDigits:0}).format(n||0);
 const fmtDate = (iso)=>{ if(!iso) return "-"; const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"}); };
@@ -692,22 +794,32 @@ async function processNextInQueue(){
 
 /* ---------------- render ---------------- */
 function computeStats(){
-  const total = items.length;
-  const pendientesEnvio = items.filter(i=>i.estado==="pendiente"||i.estado==="lista").length;
-  const enProceso = items.filter(i=>i.estado==="enviada"||i.estado==="en_revision").length;
-  const totalReembolsado = items.filter(i=>i.estado==="pagada").reduce((s,i)=>s+(Number(i.montoReembolsado)||Number(i.monto)||0),0);
-  const totalPagadoBoletas = items.reduce((s,i)=>s+(Number(i.monto)||0),0);
-  return {total,pendientesEnvio,enProceso,totalReembolsado,totalPagadoBoletas};
+  const trackable = items.filter(i=>i.tipoDocumento !== "comprobante_isapre");
+  const total = trackable.length;
+  let pendiente=0, enIsapre=0, aprobadaIsapreEsperaSeguro=0, enSeguro=0, rechazados=0, finalizados=0, totalReembolsado=0;
+  for(const item of trackable){
+    const eg = computeEstadoGeneral(item);
+    if(eg==="pendiente") pendiente++;
+    else if(eg==="en_isapre") enIsapre++;
+    else if(eg==="aprobada_isapre_pendiente_seguro") aprobadaIsapreEsperaSeguro++;
+    else if(eg==="en_seguro") enSeguro++;
+    else if(eg==="rechazada_isapre" || eg==="rechazada_seguro") rechazados++;
+    else if(eg==="finalizado"){ finalizados++; totalReembolsado += Number((item.seguro&&item.seguro.montoAprobado)||0); }
+  }
+  return {total, pendiente, enIsapre, aprobadaIsapreEsperaSeguro, enSeguro, rechazados, finalizados, totalReembolsado};
 }
 
 function renderStats(){
   const s = computeStats();
   document.getElementById("stats").innerHTML = `
     <div class="stat"><div class="n">${s.total}</div><div class="l">Prestaciones registradas</div></div>
-    <div class="stat"><div class="n">${s.pendientesEnvio}</div><div class="l">Pendientes de enviar</div></div>
-    <div class="stat"><div class="n">${s.enProceso}</div><div class="l">En proceso con la isapre</div></div>
-    <div class="stat"><div class="n">${fmtCLP(s.totalReembolsado)}</div><div class="l">Reembolsado (pagado)</div></div>
-    <div class="stat"><div class="n">${fmtCLP(s.totalPagadoBoletas)}</div><div class="l">Total gastado en boletas</div></div>
+    <div class="stat"><div class="n">${s.pendiente}</div><div class="l">Pendientes de enviar</div></div>
+    <div class="stat"><div class="n">${s.enIsapre}</div><div class="l">En isapre (esperando)</div></div>
+    <div class="stat"><div class="n">${s.aprobadaIsapreEsperaSeguro}</div><div class="l">Aprobado isapre → enviar a seguro</div></div>
+    <div class="stat"><div class="n">${s.enSeguro}</div><div class="l">En el seguro (esperando)</div></div>
+    <div class="stat"><div class="n">${s.rechazados}</div><div class="l">Rechazados</div></div>
+    <div class="stat"><div class="n">${s.finalizados}</div><div class="l">Finalizados</div></div>
+    <div class="stat"><div class="n">${fmtCLP(s.totalReembolsado)}</div><div class="l">Total reembolsado</div></div>
   `;
 }
 
@@ -729,7 +841,7 @@ function filteredItems(){
   const tipoDoc = document.getElementById("filterTipoDoc").value;
   const texto = document.getElementById("filterTexto").value.trim().toLowerCase();
   return items
-    .filter(i => !estado || i.estado===estado)
+    .filter(i => !estado || computeEstadoGeneral(i)===estado)
     .filter(i => !categoria || i.categoria===categoria)
     .filter(i => !tipoDoc || i.tipoDocumento===tipoDoc)
     .filter(i => !texto || [i.prestador,i.numeroBoleta,i.descripcion].join(" ").toLowerCase().includes(texto))
@@ -743,7 +855,7 @@ function renderGrid(){
   grid.style.display = (items.length===0) ? "none" : "grid";
 
   grid.innerHTML = list.map(item=>{
-    const est = ESTADOS[item.estado] || ESTADOS.pendiente;
+    const est = ESTADO_GENERAL[computeEstadoGeneral(item)] || ESTADO_GENERAL.pendiente;
     const fotos = item.fotos || [];
     let thumbsHtml;
     if(fotos.length===0){
@@ -766,7 +878,10 @@ function renderGrid(){
           <div class="meta">${escapeHtml(item.categoria||"Otro")} · ${fmtDate(item.fecha)}</div>
           <div class="meta">${escapeHtml(item.prestador||"Prestador no indicado")}${item.numeroBoleta?(" · N° "+escapeHtml(item.numeroBoleta)):""}</div>
           <div class="amount">${fmtCLP(item.monto)}</div>
-          ${item.tipoDocumento ? `<div><span class="doctype-badge">📄 ${escapeHtml(DOC_TYPES[item.tipoDocumento]||item.tipoDocumento)}</span></div>` : ""}
+          <div>
+            ${item.tipoDocumento ? `<span class="doctype-badge">📄 ${escapeHtml(DOC_TYPES[item.tipoDocumento]||item.tipoDocumento)}</span>` : ""}
+            ${(!item.requiereIsapre && item.tipoDocumento!=="comprobante_isapre") ? `<span class="doctype-badge low">→ directo a seguro</span>` : ""}
+          </div>
         </div>
         <div class="foot">
           <button class="btn-ghost btn-sm open-detail" data-id="${item.id}">Ver / seguimiento →</button>
@@ -796,10 +911,26 @@ function renderGrid(){
   });
 }
 
+function esElegibleIsapre(item){
+  return item.tipoDocumento !== "comprobante_isapre" && item.requiereIsapre && (item.isapre||nuevaEtapa()).estado === "no_enviada";
+}
+function esElegibleSeguro(item){
+  if(item.tipoDocumento === "comprobante_isapre") return false;
+  const seg = (item.seguro||nuevaEtapa()).estado;
+  if(seg !== "no_enviada") return false;
+  if(item.requiereIsapre) return (item.isapre||nuevaEtapa()).estado === "aprobada";
+  return true;
+}
 function updateExportButton(){
-  const btn = document.getElementById("btnExportZip");
-  btn.textContent = `📦 Preparar carpeta para isapre (${selectedIds.size})`;
-  btn.disabled = selectedIds.size===0;
+  const seleccionados = items.filter(i=>selectedIds.has(i.id));
+  const nIsapre = seleccionados.filter(esElegibleIsapre).length;
+  const nSeguro = seleccionados.filter(esElegibleSeguro).length;
+  const btnI = document.getElementById("btnExportZipIsapre");
+  const btnS = document.getElementById("btnExportZipSeguro");
+  btnI.textContent = `📦 Carpeta para Isapre (${nIsapre})`;
+  btnI.disabled = nIsapre===0;
+  btnS.textContent = `📦 Carpeta para el Seguro (${nSeguro})`;
+  btnS.disabled = nSeguro===0;
 }
 
 function renderAll(){
@@ -814,26 +945,35 @@ function openForm(item, autofill){
   editingId = item ? item.id : null;
   pendingFotos = item ? (item.fotos||[]).slice() : ((autofill && autofill.images) ? autofill.images.slice() : []);
   const g = (!item && autofill && autofill.guess) ? autofill.guess : null;
+  const esComprobanteIsapre = g && g.tipoDocumento === "comprobante_isapre";
   pendingTipoDocumento = item ? (item.tipoDocumento || null) : (g ? g.tipoDocumento : null);
 
   document.getElementById("formTitle").textContent = item ? "Editar prestación" : "Nueva prestación";
   document.getElementById("fId").value = item ? item.id : "";
   document.getElementById("fFecha").value = item ? item.fecha : ((g && g.fecha) || new Date().toISOString().slice(0,10));
-  document.getElementById("fCategoria").value = item ? item.categoria : ((g && CATEGORY_BY_DOCTYPE[g.tipoDocumento]) || "Consulta médica");
-  document.getElementById("fDescripcion").value = item ? item.descripcion : ((g && (g.detalle || g.tipoDocumentoLabel)) || "");
+  const categoria = item ? item.categoria : ((g && CATEGORY_BY_DOCTYPE[g.tipoDocumento]) || "Consulta médica");
+  document.getElementById("fCategoria").value = categoria;
+  document.getElementById("fDescripcion").value = item ? item.descripcion :
+    (esComprobanteIsapre
+      ? ("⚠️ Comprobante de reembolso Isapre (documento de respaldo) — " + (g.detalle || ""))
+      : ((g && (g.detalle || g.tipoDocumentoLabel)) || ""));
   document.getElementById("fPrestador").value = item ? item.prestador : ((g && g.prestador) || "");
   document.getElementById("fBoleta").value = item ? item.numeroBoleta : ((g && g.numeroBoleta) || "");
   document.getElementById("fMonto").value = item ? item.monto : ((g && g.monto) || "");
-  document.getElementById("fEstado").value = item ? item.estado : ((g && g.tipoDocumento==="comprobante_isapre") ? "pagada" : "pendiente");
+  document.getElementById("fRequiereIsapre").checked = item
+    ? !!item.requiereIsapre
+    : (esComprobanteIsapre ? false : categoria !== "Medicamentos");
   document.getElementById("fNota").value = "";
   renderPreviewThumbs();
   renderDocTypeHint();
   document.getElementById("formOverlay").classList.add("show");
 
   if(g){
-    toast(g.confianza>0
-      ? `Detecté: "${g.tipoDocumentoLabel}" — revisa y corrige los datos antes de guardar`
-      : `No pude identificar el documento con seguridad — completa los datos a mano`);
+    toast(esComprobanteIsapre
+      ? `Detecté un comprobante de reembolso Isapre — revisa la nota en la descripción`
+      : (g.confianza>0
+        ? `Detecté: "${g.tipoDocumentoLabel}" — revisa y corrige los datos antes de guardar`
+        : `No pude identificar el documento con seguridad — completa los datos a mano`));
   }
 }
 function renderDocTypeHint(){
@@ -882,32 +1022,50 @@ function openDetail(id){
   detailId = id;
   const item = items.find(i=>i.id===id);
   if(!item) return;
-  const est = ESTADOS[item.estado] || ESTADOS.pendiente;
+  const eg = computeEstadoGeneral(item);
+  const est = ESTADO_GENERAL[eg] || ESTADO_GENERAL.pendiente;
   document.getElementById("detailTitle").textContent = item.descripcion || "Detalle de prestación";
   const fotosHtml = (item.fotos||[]).map(f=>`<img src="${f.dataUrl}" class="lb-open" data-src="${f.dataUrl}">`).join("") || "<div style='color:#999;font-size:12.5px;'>Sin fotos adjuntas</div>";
   const historial = (item.historial||[]).slice().reverse();
   const historialHtml = historial.length ? `<ul class="timeline">${historial.map(h=>`<li><div class="d">${fmtDateTime(h.fecha)}</div>${escapeHtml(h.texto)}</li>`).join("")}</ul>` : "<div style='color:#999;font-size:12.5px;margin-top:6px;'>Sin movimientos registrados aún.</div>";
 
+  const esReferencia = item.tipoDocumento === "comprobante_isapre";
+  const isapre = item.isapre || nuevaEtapa();
+  const seguro = item.seguro || nuevaEtapa({fechaPago:""});
+  const seguroAtenuado = (item.requiereIsapre && isapre.estado !== "aprobada");
+
+  const pipelineHtml = esReferencia ? `
+    <div class="banner">📎 Este documento es un comprobante de reembolso de la isapre. Ábrelo desde la <b>prestación original</b> relacionada (Editar → marca la etapa Isapre como "Aprobada" y adjunta este archivo ahí) en vez de darle seguimiento aquí como una prestación aparte.</div>
+  ` : `
+    <div class="checkbox-row field">
+      <input type="checkbox" id="dRequiereIsapre" ${item.requiereIsapre?"checked":""}>
+      <label style="margin:0;font-weight:500;color:var(--ink);">Este reembolso pasa primero por la Isapre</label>
+    </div>
+
+    <div id="isapreBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${item.requiereIsapre?"":"opacity:.4;"}">
+      <div style="font-weight:700;font-size:13px;margin-bottom:8px;">1️⃣ Isapre</div>
+      ${etapaBoxHtml("Isapre", isapre, {numLabel:"folio / reembolso isapre"})}
+    </div>
+
+    <div id="seguroBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${seguroAtenuado?"opacity:.55;":""}">
+      <div style="font-weight:700;font-size:13px;margin-bottom:8px;">2️⃣ Seguro complementario</div>
+      ${etapaBoxHtml("Seguro", seguro, {numLabel:"siniestro / reembolso seguro", fechaPago:true})}
+    </div>
+  `;
+
   document.getElementById("detailBody").innerHTML = `
     <div class="meta" style="margin-bottom:4px;">${escapeHtml(item.categoria)} · ${fmtDate(item.fecha)} · ${escapeHtml(item.prestador||"-")}</div>
     <div class="meta" style="margin-bottom:10px;">N° boleta: ${escapeHtml(item.numeroBoleta||"-")} · Monto boleta: <b>${fmtCLP(item.monto)}</b></div>
     <div class="detail-photos">${fotosHtml}</div>
+    <div style="margin:12px 0;"><span class="badge ${est.cls}">${est.label}</span></div>
 
-    <div class="field" style="margin-top:14px;">
-      <label>Cambiar estado</label>
-      <select id="dEstadoSelect">
-        ${Object.entries(ESTADOS).map(([k,v])=>`<option value="${k}" ${item.estado===k?"selected":""}>${v.label}</option>`).join("")}
-      </select>
-    </div>
-    <div class="field" id="montoReembolsadoField" style="display:${item.estado==='pagada'?'block':'none'};">
-      <label>Monto efectivamente reembolsado (CLP)</label>
-      <input type="number" id="dMontoReembolsado" min="0" step="1" value="${item.montoReembolsado||""}">
-    </div>
+    ${pipelineHtml}
+
     <div class="field">
       <label>Agregar nota de seguimiento</label>
       <textarea id="dNota" placeholder="Ej: Llamé a la isapre, dicen que está en revisión desde el 03/09"></textarea>
     </div>
-    <button type="button" class="btn-secondary btn-sm" id="btnAddNote">+ Guardar cambio / nota</button>
+    <button type="button" class="btn-secondary btn-sm" id="btnAddNote">+ Guardar cambios</button>
 
     <div style="margin-top:16px;">
       <label style="display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:5px;">Historial de seguimiento</label>
@@ -915,26 +1073,39 @@ function openDetail(id){
     </div>
   `;
 
-  document.getElementById("dEstadoSelect").addEventListener("change", (e)=>{
-    document.getElementById("montoReembolsadoField").style.display = e.target.value==="pagada" ? "block" : "none";
-  });
+  if(!esReferencia){
+    const reqCb = document.getElementById("dRequiereIsapre");
+    reqCb.addEventListener("change", ()=>{
+      document.getElementById("isapreBox").style.opacity = reqCb.checked ? "1" : ".4";
+    });
+  }
+
   document.getElementById("btnAddNote").addEventListener("click", async ()=>{
-    const nuevoEstado = document.getElementById("dEstadoSelect").value;
+    const cambios = [];
+    if(!esReferencia){
+      const nuevoRequiere = document.getElementById("dRequiereIsapre").checked;
+      if(nuevoRequiere !== !!item.requiereIsapre){
+        cambios.push(`"Pasa por isapre" cambiado a ${nuevoRequiere ? "sí" : "no"}`);
+        item.requiereIsapre = nuevoRequiere;
+      }
+      const nuevaIsapre = readEtapaFromForm("Isapre", false);
+      if(nuevaIsapre.estado !== isapre.estado){
+        cambios.push(`Isapre: estado cambiado a "${ETAPA_ESTADOS.find(([k])=>k===nuevaIsapre.estado)[1]}"`);
+      }
+      item.isapre = nuevaIsapre;
+
+      const nuevoSeguro = readEtapaFromForm("Seguro", true);
+      if(nuevoSeguro.estado !== seguro.estado){
+        cambios.push(`Seguro: estado cambiado a "${ETAPA_ESTADOS.find(([k])=>k===nuevoSeguro.estado)[1]}"`);
+      }
+      item.seguro = nuevoSeguro;
+    }
     const nota = document.getElementById("dNota").value.trim();
-    const montoReembolsado = document.getElementById("dMontoReembolsado") ? document.getElementById("dMontoReembolsado").value : null;
-    const estadoCambio = nuevoEstado !== item.estado;
-    if(estadoCambio){
-      item.historial = item.historial || [];
-      item.historial.push({fecha:new Date().toISOString(), texto:`Estado cambiado a "${ESTADOS[nuevoEstado].label}"`});
-      item.estado = nuevoEstado;
-      if(nuevoEstado==="enviada" && !item.fechaEnvio) item.fechaEnvio = new Date().toISOString();
-    }
-    if(montoReembolsado) item.montoReembolsado = Number(montoReembolsado);
-    if(nota){
-      item.historial = item.historial || [];
-      item.historial.push({fecha:new Date().toISOString(), texto:nota});
-    }
-    if(!estadoCambio && !nota && !montoReembolsado){ toast("No hay cambios que guardar"); return; }
+    if(nota) cambios.push(nota);
+
+    if(cambios.length === 0){ toast("No hay cambios que guardar"); return; }
+    item.historial = item.historial || [];
+    for(const c of cambios){ item.historial.push({fecha:new Date().toISOString(), texto:c}); }
     await dbPut(item);
     await loadItems();
     toast("Seguimiento actualizado");
@@ -955,62 +1126,44 @@ function closeDetail(){
   detailId = null;
 }
 
-/* ---------------- ZIP export: "carpeta para la isapre" ---------------- */
+/* ---------------- ZIP export: "carpeta para isapre" / "carpeta para el seguro" ---------------- */
 function slug(s){
   return String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-zA-Z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,40) || "sin_dato";
 }
-async function exportZip(){
-  const selected = items.filter(i=>selectedIds.has(i.id));
-  if(selected.length===0) return;
+async function buildAndDownloadZip(selected, opts){
   const zip = new JSZip();
-  const carpeta = zip.folder("Reembolso_Isapre_" + new Date().toISOString().slice(0,10));
+  const carpeta = zip.folder(opts.folderPrefix + "_" + new Date().toISOString().slice(0,10));
   let csv = "Fecha,Categoria,Prestador,N Boleta,Descripcion,Monto,Estado\n";
   let totalMonto = 0;
 
   selected.forEach((item, idx)=>{
     const base = `${idx+1}_${item.fecha}_${slug(item.prestador)}_${slug(item.numeroBoleta)}`;
     (item.fotos||[]).forEach((foto, fi)=>{
-      const dataUrl = foto.dataUrl;
-      const base64 = dataUrl.split(",")[1];
+      const base64 = foto.dataUrl.split(",")[1];
       carpeta.file(`${base}_foto${fi+1}.jpg`, base64, {base64:true});
     });
-    csv += [item.fecha, item.categoria, item.prestador, item.numeroBoleta, `"${(item.descripcion||"").replace(/"/g,'""')}"`, item.monto||0, ESTADOS[item.estado].label].join(",") + "\n";
+    const estLabel = (ESTADO_GENERAL[computeEstadoGeneral(item)]||{}).label || "";
+    csv += [item.fecha, item.categoria, item.prestador, item.numeroBoleta, `"${(item.descripcion||"").replace(/"/g,'""')}"`, item.monto||0, estLabel].join(",") + "\n";
     totalMonto += Number(item.monto)||0;
   });
   csv += `\nTOTAL,,,,,${totalMonto},\n`;
-  carpeta.file("Resumen_para_isapre.csv", csv);
-
-  const readme = `RESUMEN DE REEMBOLSOS - LISTO PARA ENVIAR A LA ISAPRE
-Generado: ${new Date().toLocaleString("es-CL")}
-Prestaciones incluidas: ${selected.length}
-Monto total de boletas: ${fmtCLP(totalMonto)}
-
-Instrucciones:
-1. Revisa que todas las fotos se vean nítidas y completas (boleta, orden médica, informe si corresponde).
-2. Ingresa al sitio o app de tu isapre y sube estos archivos en la sección de reembolsos / solicitudes.
-3. Anota el N° de folio o ticket que te entregue la isapre y regístralo como nota de seguimiento en la app.
-4. Marca cada prestación como "Enviada" en la app para llevar el seguimiento.
-`;
-  carpeta.file("LEEME.txt", readme);
+  carpeta.file(opts.csvName, csv);
+  carpeta.file("LEEME.txt", opts.readmeText(selected.length, totalMonto));
 
   const blob = await zip.generateAsync({type:"blob"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `Reembolso_Isapre_${new Date().toISOString().slice(0,10)}.zip`;
+  a.download = `${opts.folderPrefix}_${new Date().toISOString().slice(0,10)}.zip`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
 
-  // marcar como "lista" automáticamente si estaban pendientes
+  const hoy = new Date().toISOString().slice(0,10);
   for(const item of selected){
-    if(item.estado==="pendiente"){
-      item.estado = "lista";
-      item.historial = item.historial||[];
-      item.historial.push({fecha:new Date().toISOString(), texto:"Incluida en carpeta ZIP preparada para la isapre"});
-      await dbPut(item);
-    }
+    opts.markStage(item, hoy);
+    await dbPut(item);
   }
   await loadItems();
   toast("Carpeta ZIP descargada ✅");
@@ -1018,6 +1171,61 @@ Instrucciones:
   selectMode = false;
   document.getElementById("btnSelectMode").textContent = "Seleccionar";
   renderAll();
+}
+
+async function exportZipIsapre(){
+  const selected = items.filter(i=>selectedIds.has(i.id) && esElegibleIsapre(i));
+  if(selected.length===0){ toast("Ninguna de las seleccionadas corresponde enviar a la isapre todavía"); return; }
+  await buildAndDownloadZip(selected, {
+    folderPrefix: "Reembolso_Isapre",
+    csvName: "Resumen_para_isapre.csv",
+    readmeText: (n, total) => `RESUMEN DE REEMBOLSOS - LISTO PARA ENVIAR A LA ISAPRE
+Generado: ${new Date().toLocaleString("es-CL")}
+Prestaciones incluidas: ${n}
+Monto total de boletas: ${fmtCLP(total)}
+
+Instrucciones:
+1. Revisa que todas las fotos se vean nítidas y completas (boleta, orden médica, informe si corresponde).
+2. Ingresa al sitio o app de tu isapre y sube estos archivos en la sección de reembolsos / solicitudes.
+3. Anota el N° de folio o reembolso que te entregue la isapre y regístralo en la app (abre la prestación → etapa Isapre → "Enviada" + N°).
+4. Cuando la isapre resuelva, marca la etapa Isapre como "Aprobada" o "Rechazada", indicando el monto aprobado si corresponde.
+5. Descarga el comprobante de reembolso de la isapre y adjúntalo a la prestación (botón "Editar" → agregar foto) antes de preparar la carpeta para el seguro.
+`,
+    markStage: (item, hoy) => {
+      item.isapre = item.isapre || nuevaEtapa();
+      item.isapre.estado = "enviada";
+      if(!item.isapre.fechaEnvio) item.isapre.fechaEnvio = hoy;
+      item.historial = item.historial || [];
+      item.historial.push({fecha:new Date().toISOString(), texto:"Incluida en carpeta ZIP preparada para la Isapre"});
+    }
+  });
+}
+
+async function exportZipSeguro(){
+  const selected = items.filter(i=>selectedIds.has(i.id) && esElegibleSeguro(i));
+  if(selected.length===0){ toast("Ninguna de las seleccionadas está lista para enviar al seguro todavía"); return; }
+  await buildAndDownloadZip(selected, {
+    folderPrefix: "Reembolso_Seguro",
+    csvName: "Resumen_para_seguro.csv",
+    readmeText: (n, total) => `RESUMEN DE REEMBOLSOS - LISTO PARA ENVIAR AL SEGURO COMPLEMENTARIO
+Generado: ${new Date().toLocaleString("es-CL")}
+Prestaciones incluidas: ${n}
+Monto total de boletas: ${fmtCLP(total)}
+
+Instrucciones:
+1. Revisa que se incluyan las boletas/órdenes originales y, si la prestación pasó por isapre, el comprobante de reembolso de la isapre.
+2. Ingresa al sitio o app de tu seguro complementario y sube estos archivos en la sección de reembolsos / siniestros.
+3. Anota el N° de siniestro o reembolso que te entregue el seguro y regístralo en la app (abre la prestación → etapa Seguro → "Enviada" + N°).
+4. Cuando el seguro resuelva, marca la etapa Seguro como "Aprobada" o "Rechazada", indicando el monto aprobado y la fecha de pago.
+`,
+    markStage: (item, hoy) => {
+      item.seguro = item.seguro || nuevaEtapa({fechaPago:""});
+      item.seguro.estado = "enviada";
+      if(!item.seguro.fechaEnvio) item.seguro.fechaEnvio = hoy;
+      item.historial = item.historial || [];
+      item.historial.push({fecha:new Date().toISOString(), texto:"Incluida en carpeta ZIP preparada para el Seguro"});
+    }
+  });
 }
 
 /* ---------------- backup / restore ---------------- */
@@ -1194,7 +1402,7 @@ function maybeAutoBackup(){
 
 /* ---------------- load / init ---------------- */
 async function loadItems(){
-  items = await dbGetAll();
+  items = (await dbGetAll()).map(migrateItem);
   renderAll();
   maybeAutoBackup();
 }
@@ -1235,6 +1443,9 @@ async function init(){
   document.getElementById("btnCloseDetail").addEventListener("click", closeDetail);
   document.getElementById("lightbox").addEventListener("click", ()=>document.getElementById("lightbox").classList.remove("show"));
 
+  document.getElementById("fCategoria").addEventListener("change", (e)=>{
+    if(!editingId){ document.getElementById("fRequiereIsapre").checked = e.target.value !== "Medicamentos"; }
+  });
   document.getElementById("dropZone").addEventListener("click", ()=>document.getElementById("fFotos").click());
   document.getElementById("fFotos").addEventListener("change", (e)=>handleFiles(e.target.files));
 
@@ -1248,7 +1459,7 @@ async function init(){
       prestador: document.getElementById("fPrestador").value.trim(),
       numeroBoleta: document.getElementById("fBoleta").value.trim(),
       monto: Number(document.getElementById("fMonto").value)||0,
-      estado: document.getElementById("fEstado").value,
+      requiereIsapre: document.getElementById("fRequiereIsapre").checked,
       fotos: pendingFotos,
       tipoDocumento: pendingTipoDocumento || null,
       historial: [],
@@ -1258,16 +1469,16 @@ async function init(){
       const old = items.find(i=>i.id===editingId);
       item.historial = old ? (old.historial||[]) : [];
       item.creado = old ? old.creado : Date.now();
-      item.montoReembolsado = old ? old.montoReembolsado : undefined;
+      item.isapre = old ? old.isapre : {estado:"no_enviada", numeroReembolso:"", fechaEnvio:"", fechaResolucion:"", montoAprobado:null};
+      item.seguro = old ? old.seguro : {estado:"no_enviada", numeroReembolso:"", fechaEnvio:"", fechaResolucion:"", montoAprobado:null, fechaPago:""};
       item.historial.push({fecha:new Date().toISOString(), texto:"Datos editados"});
     } else {
+      item.isapre = {estado:"no_enviada", numeroReembolso:"", fechaEnvio:"", fechaResolucion:"", montoAprobado:null};
+      item.seguro = {estado:"no_enviada", numeroReembolso:"", fechaEnvio:"", fechaResolucion:"", montoAprobado:null, fechaPago:""};
       if(item.tipoDocumento){
         item.historial.push({fecha:new Date().toISOString(), texto:"Prestación creada a partir de un documento detectado como: "+(DOC_TYPES[item.tipoDocumento]||item.tipoDocumento)});
       } else {
         item.historial.push({fecha:new Date().toISOString(), texto:"Prestación creada"});
-      }
-      if(item.tipoDocumento === "comprobante_isapre" && item.estado === "pagada" && !item.montoReembolsado){
-        item.montoReembolsado = item.monto;
       }
     }
     const nota = document.getElementById("fNota").value.trim();
@@ -1304,7 +1515,8 @@ async function init(){
     renderGrid();
     updateExportButton();
   });
-  document.getElementById("btnExportZip").addEventListener("click", exportZip);
+  document.getElementById("btnExportZipIsapre").addEventListener("click", exportZipIsapre);
+  document.getElementById("btnExportZipSeguro").addEventListener("click", exportZipSeguro);
 
   document.getElementById("btnBackup").addEventListener("click", backup);
   document.getElementById("btnRestore").addEventListener("click", ()=>document.getElementById("restoreInput").click());
