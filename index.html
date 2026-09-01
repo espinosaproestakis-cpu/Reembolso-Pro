@@ -115,6 +115,14 @@
 
   .doctype-badge{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;color:var(--primary-dark);background:var(--primary-light);border-radius:6px;padding:2px 7px;margin-top:2px;}
   .doctype-badge.low{color:var(--muted);background:var(--gray-bg);}
+  .doctype-badge.warn{color:var(--amber);background:var(--amber-bg);}
+  .doctype-badge.danger{color:var(--red);background:var(--red-bg);}
+
+  .summary-box{background:#fafbfc;border:1px dashed var(--line);border-radius:8px;padding:10px 12px;margin-top:8px;}
+  .summary-row{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid #eef1f4;}
+  .summary-row:last-child{border-bottom:none;}
+  .summary-row .k{color:var(--muted);}
+  .summary-row .v{font-weight:600;text-align:right;}
 
   .spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--primary);margin:6px auto 0;animation:spin 0.8s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
@@ -225,6 +233,13 @@
         <select id="fPaciente">
           <option value="">Sin especificar</option>
         </select>
+      </div>
+      <div class="field">
+        <label>Receta que respalda esta compra (solo si es una boleta de medicamentos)</label>
+        <select id="fReceta">
+          <option value="">Sin receta vinculada</option>
+        </select>
+        <div id="recetaHint" style="font-size:11.5px;color:var(--amber);margin-top:4px;display:none;"></div>
       </div>
       <div class="row2">
         <div class="field">
@@ -448,6 +463,7 @@ function migrateItem(item){
   if(item.doctor === undefined || item.doctor === null) item.doctor = "";
   if(item.rutDoctor === undefined || item.rutDoctor === null) item.rutDoctor = "";
   if(item.tipoConsulta === undefined || item.tipoConsulta === null) item.tipoConsulta = "";
+  if(item.recetaId === undefined || item.recetaId === null) item.recetaId = "";
   if(!item.isapre) item.isapre = nuevaEtapa();
   if(!item.seguro) item.seguro = nuevaEtapa({fechaPago:""});
   const legacy = item.estado;
@@ -520,10 +536,94 @@ function readEtapaFromForm(prefix, conFechaPago){
   return out;
 }
 
+/* ---------------- "chuleta": datos listos para copiar en el portal de la isapre/seguro ---------------- */
+// Arma la lista de campos (etiqueta, valor) tal como suelen pedirse en los formularios web de
+// reembolso, para que el usuario los copie directo en vez de tener que volver a mirar la boleta.
+function chuletaCampos(item, etapaTipo){
+  const especialidad = item.tipoConsulta || "";
+  const campos = [];
+  if(etapaTipo === "isapre"){
+    campos.push(["Beneficiario", nombrePaciente(item.paciente) || "-"]);
+    campos.push(["Tipo de atención", item.categoria || "-"]);
+    if(especialidad) campos.push(["Especialidad", especialidad]);
+    campos.push(["Prestador", item.prestador || "-"]);
+    if(item.doctor) campos.push(["Médico", item.doctor]);
+    if(item.rutDoctor) campos.push(["RUT del médico", item.rutDoctor]);
+    campos.push(["N° de boleta", item.numeroBoleta || "-"]);
+    campos.push(["Fecha de la prestación", fmtDate(item.fecha)]);
+    campos.push(["Valor de la prestación", fmtCLP(item.monto)]);
+    campos.push(["Enfermedad laboral", "No"]);
+    campos.push(["Archivos a subir", item.categoria==="Kinesiología / Terapia" ? "Boleta + orden médica" : "Boleta"]);
+  } else {
+    const isa = item.isapre || nuevaEtapa();
+    const bonif = item.requiereIsapre ? Number(isa.montoAprobado||0) : 0;
+    const aSolicitar = Math.max(0, Number(item.monto||0) - bonif);
+    campos.push(["Asegurado", nombrePaciente(item.paciente) || "-"]);
+    campos.push(["Tipo de atención", item.categoria || "-"]);
+    if(especialidad) campos.push(["Especialidad", especialidad]);
+    campos.push(["Prestador", item.prestador || "-"]);
+    if(item.doctor) campos.push(["Médico", item.doctor]);
+    if(item.rutDoctor) campos.push(["RUT del médico", item.rutDoctor]);
+    campos.push(["Fecha de la prestación", fmtDate(item.fecha)]);
+    campos.push(["N° de boleta", item.numeroBoleta || "-"]);
+    campos.push(["Valor de la prestación", fmtCLP(item.monto)]);
+    if(item.requiereIsapre) campos.push(["Monto bonificado por la isapre", fmtCLP(bonif)]);
+    campos.push(["Monto a solicitar", fmtCLP(aSolicitar)]);
+    campos.push(["Documentos", item.requiereIsapre
+      ? "Boleta + comprobante de la isapre"
+      : (item.tipoDocumento==="boleta_medicamentos" ? "Boleta + receta médica" : "Boleta")]);
+  }
+  return campos;
+}
+function chuletaTextoPlano(item, etapaTipo){
+  return chuletaCampos(item, etapaTipo).map(([k,v])=>`${k}: ${v}`).join("\n");
+}
+function chuletaBoxHtml(item, etapaTipo){
+  const campos = chuletaCampos(item, etapaTipo);
+  return `
+    <div class="summary-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+        <span style="font-size:11.5px;font-weight:700;color:var(--muted);">📋 Datos para copiar en el portal</span>
+        <button type="button" class="btn-ghost btn-sm copiar-chuleta" data-etapa="${etapaTipo}" style="padding:4px 8px;font-size:11.5px;">Copiar</button>
+      </div>
+      ${campos.map(([k,v])=>`<div class="summary-row"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(v)}</span></div>`).join("")}
+    </div>
+  `;
+}
+
 const fmtCLP = (n)=> new Intl.NumberFormat("es-CL",{style:"currency",currency:"CLP",maximumFractionDigits:0}).format(n||0);
 const fmtDate = (iso)=>{ if(!iso) return "-"; const [y,m,d] = String(iso).split("-"); if(!y||!m||!d) return "-"; return `${d}-${m}-${y.slice(2)}`; };
 const fmtDateTime = (iso)=>{ const d=new Date(iso); return d.toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"}) + " " + d.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"}); };
 const uid = ()=> (crypto.randomUUID ? crypto.randomUUID() : "id-"+Date.now()+"-"+Math.random().toString(16).slice(2));
+const todayISO = ()=> new Date().toISOString().slice(0,10);
+
+/* ---------------- vigencia de recetas (medicamentos) ---------------- */
+// Las recetas médicas de medicamentos son válidas por 6 meses desde su emisión en Chile.
+const RECETA_VIGENCIA_MESES = 6;
+function addMonthsISO(iso, months){
+  if(!iso) return null;
+  const parts = String(iso).split("-").map(Number);
+  if(parts.length!==3 || parts.some(isNaN)) return null;
+  const [y,m,d] = parts;
+  const dt = new Date(y, m-1, d);
+  dt.setMonth(dt.getMonth()+months);
+  return `${dt.getFullYear()}-${pad2(dt.getMonth()+1)}-${pad2(dt.getDate())}`;
+}
+// Fecha de vencimiento de una orden médica de medicamentos (item.tipoDocumento==="orden_medicamentos").
+function recetaVencimiento(item){
+  return addMonthsISO(item && item.fecha, RECETA_VIGENCIA_MESES);
+}
+// true = vigente, false = vencida, null = no se pudo determinar (sin fecha registrada).
+function recetaVigente(item){
+  const v = recetaVencimiento(item);
+  if(!v) return null;
+  return v >= todayISO();
+}
+// Recetas (órdenes de medicamentos) vigentes, opcionalmente filtradas por paciente — para vincular
+// una boleta de medicamentos a la receta que la respalda.
+function recetasVigentes(pacienteId){
+  return items.filter(i => i.tipoDocumento==="orden_medicamentos" && (!pacienteId || i.paciente===pacienteId) && recetaVigente(i)!==false);
+}
 
 function toast(msg){
   const t = document.getElementById("toast");
@@ -1125,6 +1225,16 @@ function renderGrid(){
     const est = ESTADO_GENERAL[computeEstadoGeneral(item)] || ESTADO_GENERAL.pendiente;
     const nFotos = (item.fotos||[]).length;
     const checkbox = selectMode ? `<input type="checkbox" class="sel-check row-check" data-id="${item.id}" ${selectedIds.has(item.id)?"checked":""}>` : "";
+
+    let recetaTagHtml = "";
+    if(item.tipoDocumento === "orden_medicamentos"){
+      const venc = recetaVencimiento(item);
+      const vig = recetaVigente(item);
+      if(venc) recetaTagHtml = `<span class="doctype-badge ${vig?'low':'danger'}">${vig?('Vigente hasta '+fmtDate(venc)):'Receta vencida'}</span>`;
+    } else if(item.tipoDocumento === "boleta_medicamentos" && !item.recetaId){
+      recetaTagHtml = `<span class="doctype-badge warn">⚠️ sin receta</span>`;
+    }
+
     return `
       <div class="row-item" data-id="${item.id}">
         ${checkbox}
@@ -1137,6 +1247,7 @@ function renderGrid(){
           <div class="row-tags">
             ${item.tipoDocumento ? `<span class="doctype-badge">📄 ${escapeHtml(DOC_TYPES[item.tipoDocumento]||item.tipoDocumento)}</span>` : ""}
             ${(!item.requiereIsapre && item.tipoDocumento!=="comprobante_isapre") ? `<span class="doctype-badge low">→ directo a seguro</span>` : ""}
+            ${recetaTagHtml}
             ${nFotos ? `<span class="doctype-badge low">🖼️ ${nFotos} documento${nFotos>1?"s":""}</span>` : `<span class="doctype-badge low">Sin foto</span>`}
             ${esCandidatoLimpieza(item) ? `<span class="doctype-badge low">🗑️ liberar espacio</span>` : ""}
           </div>
@@ -1254,7 +1365,16 @@ function openForm(item, autofill){
   document.getElementById("fRutDoctor").value = item ? (item.rutDoctor||"") : ((g && g.rutDoctor) || "");
   document.getElementById("fTipoConsulta").value = item ? (item.tipoConsulta||"") : ((g && g.tipoConsulta) || "");
   document.getElementById("fMonto").value = item ? item.monto : ((g && g.monto) || "");
-  document.getElementById("fPaciente").value = item ? (item.paciente || "") : ((g && g.pacienteId) || "");
+  const pacienteSeleccionado = item ? (item.paciente || "") : ((g && g.pacienteId) || "");
+  document.getElementById("fPaciente").value = pacienteSeleccionado;
+  // Si es una boleta de medicamentos detectada por OCR y sabemos el paciente, sugiere la receta
+  // vigente más reciente de esa persona (el usuario puede cambiarla o quitarla).
+  let recetaSugeridaId = item ? (item.recetaId || "") : "";
+  if(!item && g && g.tipoDocumento === "boleta_medicamentos" && g.pacienteId){
+    const candidatas = recetasVigentes(g.pacienteId).sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||""));
+    if(candidatas.length) recetaSugeridaId = candidatas[0].id;
+  }
+  poblarSelectReceta(pacienteSeleccionado, recetaSugeridaId);
   // El checkbox se muestra invertido ("Pasar directo a seguro"): marcado = NO pasa por isapre.
   document.getElementById("fDirectoSeguro").checked = item
     ? !item.requiereIsapre
@@ -1262,6 +1382,7 @@ function openForm(item, autofill){
   document.getElementById("fNota").value = "";
   renderPreviewThumbs();
   renderDocTypeHint();
+  renderRecetaHint();
   document.getElementById("formOverlay").classList.add("show");
 
   if(g){
@@ -1337,6 +1458,24 @@ function openDetail(id){
   const seguro = item.seguro || nuevaEtapa({fechaPago:""});
   const seguroAtenuado = (item.requiereIsapre && isapre.estado !== "aprobada");
 
+  let recetaInfoHtml = "";
+  if(item.tipoDocumento === "orden_medicamentos"){
+    const venc = recetaVencimiento(item);
+    const vig = recetaVigente(item);
+    if(venc){
+      recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;">Vigencia de la receta: <b style="${vig?"":"color:var(--red);"}">${vig ? ("Vigente hasta "+fmtDate(venc)) : ("Vencida desde "+fmtDate(venc))}</b></div>`;
+    }
+  } else if(item.tipoDocumento === "boleta_medicamentos"){
+    const receta = item.recetaId ? items.find(i=>i.id===item.recetaId) : null;
+    if(receta){
+      const venc = recetaVencimiento(receta);
+      const vig = recetaVigente(receta);
+      recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;">Receta vinculada: <b>${escapeHtml(receta.descripcion||"Receta")}</b>${venc?(vig ? (" — vigente hasta "+fmtDate(venc)) : (` — <span style="color:var(--red);">⚠️ vencida desde ${fmtDate(venc)}</span>`)):""}</div>`;
+    } else {
+      recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;color:var(--amber);">⚠️ Esta compra no tiene una receta vinculada.</div>`;
+    }
+  }
+
   const limpiezaHtml = (!esReferencia && esCandidatoLimpieza(item)) ? `
     <div class="banner" style="background:var(--amber-bg);color:var(--amber);border-color:#f5dcae;">
       📦 Este reembolso ya está <b>finalizado</b> (aprobado y pagado por el seguro). Las ${fotos.length} foto(s)/documento(s) adjuntos ya cumplieron su función y son candidatos a eliminarse para liberar espacio — se conservan todos los datos (fechas, montos, estados) para tus métricas.
@@ -1355,11 +1494,13 @@ function openDetail(id){
     <div id="isapreBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${item.requiereIsapre?"":"opacity:.4;"}">
       <div style="font-weight:700;font-size:13px;margin-bottom:8px;">1️⃣ Isapre</div>
       ${etapaBoxHtml("Isapre", isapre, {numLabel:"folio / reembolso isapre"})}
+      ${isapre.estado==="no_enviada" ? chuletaBoxHtml(item, "isapre") : ""}
     </div>
 
     <div id="seguroBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${seguroAtenuado?"opacity:.55;":""}">
       <div style="font-weight:700;font-size:13px;margin-bottom:8px;">2️⃣ Seguro complementario</div>
       ${etapaBoxHtml("Seguro", seguro, {numLabel:"siniestro / reembolso seguro", fechaPago:true})}
+      ${seguro.estado==="no_enviada" ? chuletaBoxHtml(item, "seguro") : ""}
     </div>
   `;
 
@@ -1367,6 +1508,7 @@ function openDetail(id){
     <div class="meta" style="margin-bottom:4px;">${escapeHtml(item.categoria)} · ${fmtDate(item.fecha)} · ${escapeHtml(item.prestador||"-")}</div>
     <div class="meta" style="margin-bottom:4px;">Paciente: <b>${escapeHtml(nombrePaciente(item.paciente) || "Sin especificar")}</b></div>
     ${(item.doctor || item.rutDoctor || item.tipoConsulta) ? `<div class="meta" style="margin-bottom:4px;">${item.doctor?("Doctor: <b>"+escapeHtml(item.doctor)+"</b>"):""}${item.rutDoctor?(" · RUT: "+escapeHtml(item.rutDoctor)):""}${item.tipoConsulta?(" · "+escapeHtml(item.tipoConsulta)):""}</div>` : ""}
+    ${recetaInfoHtml}
     <div class="meta" style="margin-bottom:10px;">N° boleta: ${escapeHtml(item.numeroBoleta||"-")} · Monto boleta: <b>${fmtCLP(item.monto)}</b></div>
     <div class="detail-photos">${fotosHtml}</div>
     <div style="margin:12px 0;"><span class="badge ${est.cls}">${est.label}</span></div>
@@ -1456,6 +1598,18 @@ function openDetail(id){
       await loadItems();
       toast("Documento eliminado");
       openDetail(id);
+    });
+  });
+
+  document.getElementById("detailBody").querySelectorAll(".copiar-chuleta").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      const texto = chuletaTextoPlano(item, btn.dataset.etapa);
+      try{
+        await navigator.clipboard.writeText(texto);
+        toast("Datos copiados — pégalos en el formulario del portal");
+      }catch(e){
+        alert("No se pudo copiar automáticamente. Aquí están los datos para copiar a mano:\n\n" + texto);
+      }
     });
   });
 
@@ -1765,6 +1919,33 @@ function poblarSelectsPacientes(){
   document.getElementById("filterPaciente").innerHTML = '<option value="">Todos los pacientes</option>' + opciones;
 }
 
+// Llena el selector "Receta que respalda esta compra" con las recetas (órdenes de medicamentos)
+// vigentes del paciente elegido (o de todos, si aún no se eligió paciente).
+function poblarSelectReceta(pacienteId, currentId){
+  const sel = document.getElementById("fReceta");
+  if(!sel) return;
+  const vigentes = recetasVigentes(pacienteId).sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||""));
+  const opciones = vigentes.map(o=>{
+    const venc = recetaVencimiento(o);
+    return `<option value="${o.id}">${escapeHtml(o.descripcion || "Receta")} — ${fmtDate(o.fecha)}${venc?(" (vence "+fmtDate(venc)+")"):""}</option>`;
+  }).join("");
+  sel.innerHTML = '<option value="">Sin receta vinculada</option>' + opciones;
+  sel.value = (currentId && vigentes.some(o=>o.id===currentId)) ? currentId : "";
+}
+function renderRecetaHint(){
+  const hint = document.getElementById("recetaHint");
+  if(!hint) return;
+  const categoria = document.getElementById("fCategoria").value;
+  const recetaId = document.getElementById("fReceta").value;
+  const esRecetaMisma = pendingTipoDocumento === "orden_medicamentos";
+  if(categoria === "Medicamentos" && !esRecetaMisma && !recetaId){
+    hint.style.display = "block";
+    hint.textContent = "⚠️ No hay una receta vigente vinculada a esta compra — revisa que tengas la orden médica de respaldo, o déjala sin vincular si no aplica.";
+  } else {
+    hint.style.display = "none";
+  }
+}
+
 async function init(){
   checkStorage();
   poblarSelectsPacientes();
@@ -1794,7 +1975,13 @@ async function init(){
 
   document.getElementById("fCategoria").addEventListener("change", (e)=>{
     if(!editingId){ document.getElementById("fDirectoSeguro").checked = e.target.value === "Medicamentos"; }
+    renderRecetaHint();
   });
+  document.getElementById("fPaciente").addEventListener("change", ()=>{
+    poblarSelectReceta(document.getElementById("fPaciente").value, document.getElementById("fReceta").value);
+    renderRecetaHint();
+  });
+  document.getElementById("fReceta").addEventListener("change", renderRecetaHint);
   document.getElementById("dropZone").addEventListener("click", ()=>document.getElementById("fFotos").click());
   document.getElementById("fFotos").addEventListener("change", (e)=>handleFiles(e.target.files));
 
@@ -1813,6 +2000,7 @@ async function init(){
       monto: Number(document.getElementById("fMonto").value)||0,
       requiereIsapre: !document.getElementById("fDirectoSeguro").checked,
       paciente: document.getElementById("fPaciente").value,
+      recetaId: document.getElementById("fReceta").value,
       fotos: pendingFotos,
       tipoDocumento: pendingTipoDocumento || null,
       historial: [],
