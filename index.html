@@ -160,6 +160,7 @@
       <option value="boleta_medica">Boleta atención médica</option>
       <option value="boleta_psicologia">Boleta psicología</option>
       <option value="boleta_kinesiologia">Boleta kinesiología</option>
+      <option value="orden_kinesiologia">Orden médica kinesiología</option>
       <option value="comprobante_isapre">Comprobante reembolso isapre</option>
       <option value="otro">Otro / sin identificar</option>
     </select>
@@ -498,7 +499,7 @@ function readEtapaFromForm(prefix, conFechaPago){
 }
 
 const fmtCLP = (n)=> new Intl.NumberFormat("es-CL",{style:"currency",currency:"CLP",maximumFractionDigits:0}).format(n||0);
-const fmtDate = (iso)=>{ if(!iso) return "-"; const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"}); };
+const fmtDate = (iso)=>{ if(!iso) return "-"; const [y,m,d] = String(iso).split("-"); if(!y||!m||!d) return "-"; return `${d}-${m}-${y.slice(2)}`; };
 const fmtDateTime = (iso)=>{ const d=new Date(iso); return d.toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"}) + " " + d.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"}); };
 const uid = ()=> (crypto.randomUUID ? crypto.randomUUID() : "id-"+Date.now()+"-"+Math.random().toString(16).slice(2));
 
@@ -539,6 +540,7 @@ const DOC_TYPES = {
   boleta_medica: "Boleta de atención médica",
   boleta_psicologia: "Boleta de atención psicología",
   boleta_kinesiologia: "Boleta de atención kinesiología",
+  orden_kinesiologia: "Orden médica para kinesiología",
   comprobante_isapre: "Comprobante de reembolso isapre",
   otro: "Otro / no identificado"
 };
@@ -548,6 +550,7 @@ const CATEGORY_BY_DOCTYPE = {
   boleta_medica: "Consulta médica",
   boleta_psicologia: "Psicología",
   boleta_kinesiologia: "Kinesiología / Terapia",
+  orden_kinesiologia: "Kinesiología / Terapia",
   comprobante_isapre: "Otro",
   otro: "Otro"
 };
@@ -791,12 +794,124 @@ function extractDetalle(text, tipo){
   return null;
 }
 
+/* ---------------- generación automática del nombre del documento ---------------- */
+const ISAPRES_CONOCIDAS = ["banmedica","cruz blanca","consalud","colmena","vida tres","nueva masvida","masvida","fonasa"];
+const ISAPRES_LABEL = {
+  banmedica:"Banmédica", "cruz blanca":"Cruz Blanca", consalud:"Consalud", colmena:"Colmena",
+  "vida tres":"Vida Tres", "nueva masvida":"Nueva MasVida", masvida:"Nueva MasVida", fonasa:"Fonasa"
+};
+const ESPECIALIDADES = [
+  "traumatologia","psiquiatria","endocrinologia","dermatologia","cardiologia","pediatria",
+  "ginecologia","oftalmologia","otorrino","urologia","neurologia","gastroenterologia",
+  "oncologia","reumatologia","fisiatria","nutriologia","medicina familiar","medicina general"
+];
+const ESPECIALIDADES_LABEL = {
+  traumatologia:"Traumatología", psiquiatria:"Psiquiatría", endocrinologia:"Endocrinología",
+  dermatologia:"Dermatología", cardiologia:"Cardiología", pediatria:"Pediatría",
+  ginecologia:"Ginecología", oftalmologia:"Oftalmología", otorrino:"Otorrino",
+  urologia:"Urología", neurologia:"Neurología", gastroenterologia:"Gastroenterología",
+  oncologia:"Oncología", reumatologia:"Reumatología", fisiatria:"Fisiatría",
+  nutriologia:"Nutriología", "medicina familiar":"Medicina Familiar", "medicina general":"Medicina General"
+};
+
+// Busca "Dr." / "Dra." seguido de un nombre propio y devuelve esa palabra (normalmente el apellido,
+// que es como suelen firmar las recetas/órdenes chilenas: "Dr. Alomar", "Dra. Pérez"). Si no lo
+// encuentra, usa el último token del prestador (campo "prestador") como respaldo.
+function extractApellidoDoctor(text, prestadorFallback){
+  const m = text.match(/\bDra?\.?\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{2,})/);
+  if(m) return m[1];
+  // Solo usa el prestador como respaldo si parece un nombre real (sin dígitos ni paréntesis,
+  // que delatarían que en realidad capturamos una línea de texto genérica del documento).
+  if(prestadorFallback && !/[\d()]/.test(prestadorFallback)){
+    const tokens = String(prestadorFallback).trim().split(/\s+/).filter(Boolean);
+    if(tokens.length) return tokens[tokens.length-1];
+  }
+  return null;
+}
+function extractNumeroReembolso(text){
+  const raw = extractLabeled(text, [
+    "n\\s*[°º]?\\.?\\s*(?:de\\s*)?reembolso",
+    "reembolso\\s*n[°º]?\\.?",
+    "n\\s*[°º]\\s*solicitud",
+  ], ["fecha","monto","rut"]);
+  if(!raw) return null;
+  const m = raw.match(/\d[\d.\-\/]*/);
+  return m ? m[0] : null;
+}
+// Abreviación simple de un nombre de medicamento (aproximada — el usuario puede ajustar el
+// nombre del archivo/descripción antes de guardar si quiere algo más preciso).
+function abrevMedicamento(nombre){
+  const w = String(nombre||"").replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ]/g,"");
+  if(!w) return "";
+  return w.toLowerCase().slice(0, Math.min(4, w.length));
+}
+function extractMedicamentosAbrev(text){
+  const meds = Array.from(text.matchAll(/([A-Za-zÁÉÍÓÚÑáéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ()\- ]{1,30}?\s\d+[.,]?\d*\s*(mg|mcg|ml)\b)/gi))
+    .map(m=> m[1].trim().split(/\s+/)[0]);
+  const abrevs = Array.from(new Set(meds.map(abrevMedicamento))).filter(Boolean).slice(0,4);
+  return abrevs.join(", ");
+}
+function extractNumSesiones(text){
+  const m = text.match(/(\d+)\s*sesi[oó]n/i);
+  return m ? m[1] : null;
+}
+function extractIsapre(text){
+  const norm = normalizeText(text);
+  for(const key of ISAPRES_CONOCIDAS){
+    if(norm.includes(key)) return ISAPRES_LABEL[key];
+  }
+  return null;
+}
+function extractEspecialidad(text){
+  const norm = normalizeText(text);
+  for(const key of ESPECIALIDADES){
+    if(norm.includes(key)) return ESPECIALIDADES_LABEL[key];
+  }
+  return null;
+}
+
+// Genera el nombre sugerido del documento según su tipo, siguiendo la nomenclatura pedida.
+// Cualquier dato que no se pueda determinar con confianza simplemente se omite del nombre
+// (en vez de bloquear o adivinar) — el usuario siempre puede editar el resultado antes de guardar.
+function generarNombreDocumento(tipoDocumento, text, guess){
+  guess = guess || {};
+  const fecha = guess.fecha ? fmtDate(guess.fecha) : null;
+  const apellido = extractApellidoDoctor(text, guess.prestador);
+  const partes = (arr)=> arr.filter(Boolean).join(" ");
+
+  if(tipoDocumento === "orden_medicamentos"){
+    let out = partes(["Receta", fecha, apellido ? ("Dr. "+apellido) : null]);
+    const meds = extractMedicamentosAbrev(text);
+    if(meds) out += (out ? " - " : "") + meds;
+    return out || null;
+  }
+  if(tipoDocumento === "orden_kinesiologia"){
+    let out = partes(["Orden Kine", fecha, apellido ? ("Dr. "+apellido) : null]);
+    const sesiones = extractNumSesiones(text);
+    if(sesiones) out += (out ? " - " : "") + `${sesiones} sesiones`;
+    return out || null;
+  }
+  if(tipoDocumento === "boleta_medicamentos"){
+    return partes(["Boleta med", guess.numeroBoleta, fecha]) || null;
+  }
+  if(tipoDocumento === "boleta_medica" || tipoDocumento === "boleta_psicologia" || tipoDocumento === "boleta_kinesiologia"){
+    const especialidad = extractEspecialidad(text)
+      || (tipoDocumento==="boleta_psicologia" ? "Psicología" : (tipoDocumento==="boleta_kinesiologia" ? "Kinesiología" : null));
+    return partes(["Boleta", fecha, especialidad, apellido]) || null;
+  }
+  if(tipoDocumento === "comprobante_isapre"){
+    const numero = extractNumeroReembolso(text) || guess.numeroBoleta;
+    return partes(["Comprobante", extractIsapre(text), numero, fecha]) || null;
+  }
+  return null;
+}
+
 function classifyAndExtract(text){
   const norm = normalizeText(text);
   const scores = {
     boleta_medicamentos: countMatches(norm, ["farmacia","salcobrand","cruz verde","ahumada","boleta electronica","liga chilena","medicamento"]),
     orden_medicamentos: countMatches(norm, ["rp (prescripcion)","prescripcion","dosis","via de administracion","administrar","medico cirujano","comprimido","gotas via oral","receta"]),
-    boleta_kinesiologia: countMatches(norm, ["kinesiolog","atencion kinesiologica"]),
+    kinesiologia: countMatches(norm, ["kinesiolog","atencion kinesiologica"]),
     boleta_psicologia: countMatches(norm, ["psicolog","psicoterapia","sesion psicologica"]),
     comprobante_isapre: countMatches(norm, ["isapre","solicitud de bonificacion","monto reembolso","totales isapre","reembolso","banmedica","cruz blanca","consalud","colmena","masvida"]),
     boleta_medica: countMatches(norm, ["boleta de honorarios","consulta medica","honorarios medicos","atencion medica","psiquiatra","endocrinologia","medico psiquiatra"]),
@@ -805,20 +920,31 @@ function classifyAndExtract(text){
   for(const [k,v] of Object.entries(scores)){
     if(v > bestScore){ best = k; bestScore = v; }
   }
+  const monto = extractMonto(text);
+  if(best === "kinesiologia"){
+    // Distingue orden médica (sin monto: es una indicación, no una boleta pagada) de boleta (con monto).
+    best = monto ? "boleta_kinesiologia" : "orden_kinesiologia";
+  }
   const pacienteTexto = extractPaciente(text);
   const pacienteMatch = matchPaciente(text, pacienteTexto);
+  const fecha = extractFecha(text);
+  const prestador = extractPrestador(text);
+  const numeroBoleta = extractNumeroBoleta(text);
+  const detalle = extractDetalle(text, best);
+  const nombreArchivo = generarNombreDocumento(best, text, {fecha, monto, prestador, numeroBoleta});
   return {
     tipoDocumento: best,
     tipoDocumentoLabel: DOC_TYPES[best],
     confianza: bestScore,
-    fecha: extractFecha(text),
-    monto: extractMonto(text),
+    fecha,
+    monto,
     paciente: pacienteTexto,
     pacienteId: pacienteMatch ? pacienteMatch.id : "",
     pacienteNombre: pacienteMatch ? pacienteMatch.nombre : null,
-    prestador: extractPrestador(text),
-    numeroBoleta: extractNumeroBoleta(text),
-    detalle: extractDetalle(text, best)
+    prestador,
+    numeroBoleta,
+    detalle,
+    nombreArchivo
   };
 }
 
@@ -1012,10 +1138,11 @@ function openForm(item, autofill){
   document.getElementById("fFecha").value = item ? item.fecha : ((g && g.fecha) || new Date().toISOString().slice(0,10));
   const categoria = item ? item.categoria : ((g && CATEGORY_BY_DOCTYPE[g.tipoDocumento]) || "Consulta médica");
   document.getElementById("fCategoria").value = categoria;
+  const nombreSugerido = g ? g.nombreArchivo : null;
   document.getElementById("fDescripcion").value = item ? item.descripcion :
     (esComprobanteIsapre
-      ? ("⚠️ Comprobante de reembolso Isapre (documento de respaldo) — " + (g.detalle || ""))
-      : ((g && (g.detalle || g.tipoDocumentoLabel)) || ""));
+      ? ((nombreSugerido || "Comprobante de reembolso Isapre") + " — documento de respaldo, no es una prestación nueva")
+      : (nombreSugerido || (g && (g.detalle || g.tipoDocumentoLabel)) || ""));
   document.getElementById("fPrestador").value = item ? item.prestador : ((g && g.prestador) || "");
   document.getElementById("fBoleta").value = item ? item.numeroBoleta : ((g && g.numeroBoleta) || "");
   document.getElementById("fMonto").value = item ? item.monto : ((g && g.monto) || "");
@@ -1199,13 +1326,15 @@ async function buildAndDownloadZip(selected, opts){
   let totalMonto = 0;
 
   selected.forEach((item, idx)=>{
-    const base = `${idx+1}_${item.fecha}_${slug(item.prestador)}_${slug(item.numeroBoleta)}`;
+    const base = item.descripcion
+      ? `${idx+1}_${slug(item.descripcion)}`
+      : `${idx+1}_${fmtDate(item.fecha)}_${slug(item.prestador)}_${slug(item.numeroBoleta)}`;
     (item.fotos||[]).forEach((foto, fi)=>{
       const base64 = foto.dataUrl.split(",")[1];
       carpeta.file(`${base}_foto${fi+1}.jpg`, base64, {base64:true});
     });
     const estLabel = (ESTADO_GENERAL[computeEstadoGeneral(item)]||{}).label || "";
-    csv += [item.fecha, nombrePaciente(item.paciente), item.categoria, item.prestador, item.numeroBoleta, `"${(item.descripcion||"").replace(/"/g,'""')}"`, item.monto||0, estLabel].join(",") + "\n";
+    csv += [fmtDate(item.fecha), nombrePaciente(item.paciente), item.categoria, item.prestador, item.numeroBoleta, `"${(item.descripcion||"").replace(/"/g,'""')}"`, item.monto||0, estLabel].join(",") + "\n";
     totalMonto += Number(item.monto)||0;
   });
   csv += `\nTOTAL,,,,,,${totalMonto},\n`;
