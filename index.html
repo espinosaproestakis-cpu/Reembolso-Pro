@@ -172,7 +172,7 @@
       <option value="boleta_medica">Boleta atención médica</option>
       <option value="boleta_psicologia">Boleta psicología</option>
       <option value="boleta_kinesiologia">Boleta kinesiología (antiguo)</option>
-      <option value="orden_kinesiologia">Orden médica kinesiología (antiguo)</option>
+      <option value="orden_kinesiologia">Orden médica de kinesiología</option>
       <option value="boleta_examen">Boleta de examen</option>
       <option value="orden_examen">Orden médica para examen</option>
       <option value="comprobante_isapre">Comprobante reembolso isapre</option>
@@ -183,6 +183,7 @@
     <button class="btn-secondary btn-sm" id="btnSelectMode">Seleccionar</button>
     <button class="btn-primary btn-sm" id="btnExportZipIsapre" disabled>📦 Carpeta para Isapre (0)</button>
     <button class="btn-primary btn-sm" id="btnExportZipSeguro" disabled>📦 Carpeta para el Seguro (0)</button>
+    <button class="btn-secondary btn-sm" id="btnConsultarZurich" disabled title="Abre el portal de Zurich y te permite actualizar el estado de varios reembolsos a la vez. Solo incluye reembolsos ya enviados al seguro (Zurich) — no mezcla con isapre.">🔍 Consultar Zurich seleccionados (0)</button>
     <button class="btn-secondary btn-sm" id="btnLimpiarFinalizados" disabled title="Elimina las fotos/documentos de prestaciones ya finalizadas por el seguro, conservando todos los datos">🧹 Liberar espacio (0)</button>
   </div>
 
@@ -314,6 +315,22 @@
   </div>
 </div>
 
+<!-- Modal: consultar y actualizar varios reembolsos de Zurich a la vez -->
+<div class="overlay" id="consultaOverlay">
+  <div class="modal" style="max-width:600px;">
+    <h2>🔍 Consultar estado en Zurich</h2>
+    <p style="font-size:12.5px;color:var(--muted);line-height:1.55;margin-top:0;">
+      Se abrió el portal de Zurich en una pestaña nueva. Revisa ahí el estado de cada reembolso y luego marca lo que corresponda abajo — al guardar, se actualiza el estado y el monto de cada uno, y queda registrada la fecha de esta consulta.
+    </p>
+    <div id="consultaBody"></div>
+    <div class="actions">
+      <button type="button" class="btn-ghost" id="btnConsultaCancelar">Cancelar</button>
+      <div class="spacer"></div>
+      <button type="button" class="btn-primary" id="btnConsultaGuardarTodos">Guardar todos</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: respaldo en Google Drive -->
 <div class="overlay" id="driveOverlay">
   <div class="modal" style="max-width:480px;">
@@ -420,6 +437,10 @@ let selectedIds = new Set();
 let storageUsable = true;
 
 /* ---------------- flujo de dos etapas: Isapre -> Seguro complementario ---------------- */
+// Portal del seguro complementario (Zurich) — se usa como acceso directo desde el botón
+// "Consultar estado ahora" de la etapa Seguro. La isapre varía según la póliza de cada persona,
+// así que ese botón no tiene un enlace fijo: solo recuerda ir a revisar y volver a actualizar aquí.
+const ZURICH_PORTAL_URL = "https://clientes.zurich.cl/Portalclientes/login";
 const ETAPA_ESTADOS = [
   ["no_enviada","No enviada"],
   ["enviada","Enviada — esperando resolución"],
@@ -437,7 +458,24 @@ const ESTADO_GENERAL = {
   referencia:{label:"Documento de respaldo", cls:"pendiente"}
 };
 function nuevaEtapa(extra){
-  return Object.assign({estado:"no_enviada", numeroReembolso:"", fechaEnvio:"", fechaResolucion:"", montoAprobado:null}, extra||{});
+  return Object.assign({estado:"no_enviada", numeroReembolso:"", fechaEnvio:"", fechaResolucion:"", montoAprobado:null, fechaEstimadaRespuesta:"", fechaUltimaActualizacion:""}, extra||{});
+}
+// Una etapa "necesita revisión" cuando ya se envió, sigue esperando resolución, y llegó (o pasó) la
+// fecha en que te dijeron que tendrían respuesta — para poder ir a consultar el estado real al portal.
+function etapaNecesitaRevision(etapa){
+  return !!(etapa && etapa.estado === "enviada" && etapa.fechaEstimadaRespuesta && etapa.fechaEstimadaRespuesta <= todayISO());
+}
+// Indica qué etapa(s) de una prestación están a la espera de que se consulte su estado real.
+function etapasPorRevisar(item){
+  const out = [];
+  if(esDocumentoReferencia(item)) return out;
+  if(item.requiereIsapre){
+    if(etapaNecesitaRevision(item.isapre)) out.push("isapre");
+    if((item.isapre && item.isapre.estado === "aprobada") && etapaNecesitaRevision(item.seguro)) out.push("seguro");
+  } else {
+    if(etapaNecesitaRevision(item.seguro)) out.push("seguro");
+  }
+  return out;
 }
 // Un documento "de referencia" no es una boleta pagada — es un comprobante de reembolso isapre
 // o una orden médica/receta (indicación, sin monto propio) — por lo que no entra en las
@@ -492,6 +530,12 @@ function migrateItem(item){
   if(item.recetaId === undefined || item.recetaId === null) item.recetaId = "";
   if(!item.isapre) item.isapre = nuevaEtapa();
   if(!item.seguro) item.seguro = nuevaEtapa({fechaPago:""});
+  // Rellena los campos nuevos (fecha estimada de respuesta / última actualización) en etapas
+  // guardadas por versiones anteriores de la app, que no los tenían.
+  for(const etapa of [item.isapre, item.seguro]){
+    if(etapa.fechaEstimadaRespuesta === undefined) etapa.fechaEstimadaRespuesta = "";
+    if(etapa.fechaUltimaActualizacion === undefined) etapa.fechaUltimaActualizacion = "";
+  }
   const legacy = item.estado;
   if(legacy){
     if(legacy === "pagada"){
@@ -515,6 +559,8 @@ function migrateItem(item){
 function etapaBoxHtml(prefix, etapa, opts){
   opts = opts || {};
   const estado = (etapa && etapa.estado) || "no_enviada";
+  const necesitaRevision = etapaNecesitaRevision(etapa);
+  const ultimaActualizacion = (etapa && etapa.fechaUltimaActualizacion) || "";
   return `
     <div class="field">
       <label>Estado</label>
@@ -547,6 +593,18 @@ function etapaBoxHtml(prefix, etapa, opts){
       <label>Fecha de pago</label>
       <input type="date" id="d${prefix}FechaPago" value="${(etapa&&etapa.fechaPago)||""}">
     </div>` : ""}
+    <div class="row2">
+      <div class="field">
+        <label>Fecha estimada de respuesta</label>
+        <input type="date" id="d${prefix}FechaEstimada" value="${(etapa&&etapa.fechaEstimadaRespuesta)||""}">
+      </div>
+      <div class="field">
+        <label>Última actualización de estado</label>
+        <div style="font-size:13px;padding-top:6px;color:${ultimaActualizacion?"var(--ink)":"var(--muted)"};">${ultimaActualizacion ? fmtDate(ultimaActualizacion) : "Aún no se ha consultado"}</div>
+      </div>
+    </div>
+    ${necesitaRevision ? `<div class="banner" style="background:var(--amber-bg);color:var(--amber);border-color:#f5dcae;margin-bottom:8px;">⏰ Ya llegó la fecha estimada de respuesta (${fmtDate(etapa.fechaEstimadaRespuesta)}) — conviene consultar el estado real.</div>` : ""}
+    ${estado === "enviada" ? `<button type="button" class="btn-secondary btn-sm" id="d${prefix}BtnConsultar" data-url="${opts.consultarUrl||""}">🔍 Consultar estado ahora</button>` : ""}
   `;
 }
 function readEtapaFromForm(prefix, conFechaPago){
@@ -556,7 +614,8 @@ function readEtapaFromForm(prefix, conFechaPago){
     numeroReembolso: document.getElementById(`d${prefix}Numero`).value.trim(),
     fechaEnvio: document.getElementById(`d${prefix}FechaEnvio`).value,
     fechaResolucion: document.getElementById(`d${prefix}FechaResolucion`).value,
-    montoAprobado: montoVal ? Number(montoVal) : null
+    montoAprobado: montoVal ? Number(montoVal) : null,
+    fechaEstimadaRespuesta: document.getElementById(`d${prefix}FechaEstimada`).value
   };
   if(conFechaPago) out.fechaPago = document.getElementById(`d${prefix}FechaPago`).value;
   return out;
@@ -650,6 +709,19 @@ function recetaVigente(item){
 function recetasVigentes(pacienteId){
   return items.filter(i => i.tipoDocumento==="orden_medicamentos" && (!pacienteId || i.paciente===pacienteId) && recetaVigente(i)!==false);
 }
+// Órdenes médicas de kinesiología, opcionalmente filtradas por paciente — para vincular una boleta
+// de kinesiología a la orden que la respalda. A diferencia de las recetas de medicamentos, estas
+// órdenes no tienen una fecha de vencimiento fija en Chile, así que no se filtran por vigencia.
+function ordenesKineDisponibles(pacienteId){
+  return items.filter(i => i.tipoDocumento==="orden_kinesiologia" && (!pacienteId || i.paciente===pacienteId));
+}
+// A partir de la categoría/subcategoría del formulario, indica qué tipo de documento de referencia
+// (receta u orden médica) se puede vincular a la boleta — o null si esa combinación no tiene ninguno.
+function tipoDocReferenciaParaForm(categoria, subcategoria){
+  if(categoria === "Remedios") return "orden_medicamentos";
+  if(categoria === "Consultas" && esKinesiologia(subcategoria)) return "orden_kinesiologia";
+  return null;
+}
 
 function toast(msg){
   const t = document.getElementById("toast");
@@ -690,13 +762,16 @@ const DOC_TYPES = {
   boleta_medica: "Boleta de atención médica",
   boleta_psicologia: "Boleta de atención psicología (antiguo)",
   boleta_kinesiologia: "Boleta de atención kinesiología (antiguo)",
-  orden_kinesiologia: "Orden médica para kinesiología (antiguo)",
+  orden_kinesiologia: "Orden médica de kinesiología",
   comprobante_isapre: "Comprobante de reembolso isapre",
   otro: "Otro / no identificado"
 };
 // Categoría (de las 4 nuevas: Remedios/Exámenes/Consultas/Otros) que le corresponde a cada tipo de
-// documento detectado por OCR. Los tipos "boleta_psicologia"/"boleta_kinesiologia"/"orden_kinesiologia"
-// son legados de versiones anteriores (ya no se generan) — se conservan solo para no romper datos viejos.
+// documento detectado por OCR. Los tipos "boleta_psicologia"/"boleta_kinesiologia" son legados de
+// versiones anteriores (ya no se generan) — se conservan solo para no romper datos viejos.
+// "orden_kinesiologia" sí se sigue generando (Consultas → subcategoría Kinesiología → "orden"): es
+// la orden médica que respalda las sesiones de kinesiología, igual que "orden_medicamentos" respalda
+// las boletas de medicamentos.
 const CATEGORY_BY_DOCTYPE = {
   boleta_medicamentos: "Remedios",
   orden_medicamentos: "Remedios",
@@ -705,10 +780,15 @@ const CATEGORY_BY_DOCTYPE = {
   boleta_medica: "Consultas",
   boleta_psicologia: "Consultas",
   boleta_kinesiologia: "Consultas",
-  orden_kinesiologia: "Otros",
+  orden_kinesiologia: "Consultas",
   comprobante_isapre: "Otros",
   otro: "Otros"
 };
+// true si la subcategoría (especialidad) corresponde a kinesiología — se usa para decidir si una
+// prestación de "Consultas" puede tener una orden médica vinculada (igual que Remedios con las recetas).
+function esKinesiologia(subcategoria){
+  return normalizeText(subcategoria||"").includes("kinesio");
+}
 // Especialidades sugeridas para la subcategoría de "Consultas" (autocompletar, el usuario puede escribir otra).
 const SUBCATEGORIAS_CONSULTA = ["Medicina General","Pediatría","Ginecología","Traumatología","Psiquiatría","Psicología","Kinesiología","Dermatología","Otorrinolaringología","Nutrición","Urgencia","Dental","Cirugía","Cardiología","Neurología","Oftalmología","Urología","Gastroenterología","Oncología","Reumatología","Endocrinología","Fisiatría","Otra especialidad"];
 function poblarDatalistSubcategoria(){
@@ -718,10 +798,15 @@ function poblarDatalistSubcategoria(){
 }
 // A partir de la categoría y de si el usuario está subiendo una orden médica o una boleta, deduce
 // el tipoDocumento a guardar (usado para prestaciones creadas/editadas a mano, sin pasar por OCR).
-function inferirTipoDocumento(categoria, tipoRegistro){
+// "subcategoria" solo importa para Consultas: únicamente Kinesiología admite subir una orden médica
+// aparte (las demás especialidades siguen registrándose siempre como boleta, para no complicar el formulario).
+function inferirTipoDocumento(categoria, tipoRegistro, subcategoria){
   if(categoria === "Remedios") return tipoRegistro === "orden" ? "orden_medicamentos" : "boleta_medicamentos";
   if(categoria === "Exámenes") return tipoRegistro === "orden" ? "orden_examen" : "boleta_examen";
-  if(categoria === "Consultas") return "boleta_medica";
+  if(categoria === "Consultas"){
+    if(tipoRegistro === "orden" && esKinesiologia(subcategoria)) return "orden_kinesiologia";
+    return "boleta_medica";
+  }
   return null;
 }
 // Tipos de documento que solo puede haber puesto el detector OCR (no el selector manual de categoría/tipo
@@ -867,13 +952,15 @@ function parseCLPNumber(str){
 }
 function pad2(n){ return String(n).padStart(2,"0"); }
 
-function extractFecha(text){
+// Intenta una fecha dentro de un fragmento de texto ya acotado (ISO o dd-mm-aaaa), sin buscar en
+// todo el documento — se usa primero sobre el valor de una etiqueta explícita, y si no hay nada
+// etiquetado, se aplica sobre el documento completo como respaldo (comportamiento de siempre).
+function parseFechaFragmento(text){
   let m = text.match(/(\d{1,2})\s*de\s*([a-záéíóúñ]+)\s*de\s*(\d{4})/i);
   if(m){
     const mes = MESES_ES[normalizeText(m[2])];
     if(mes) return `${m[3]}-${pad2(mes)}-${pad2(m[1])}`;
   }
-  // formato ISO (aaaa-mm-dd), común en boletas electrónicas
   m = text.match(/\b(20\d{2})[\/\-]([01]?\d)[\/\-]([0-3]?\d)\b/);
   if(m){
     const mm=parseInt(m[2],10), dd=parseInt(m[3],10);
@@ -885,6 +972,16 @@ function extractFecha(text){
     if(dd>=1 && dd<=31 && mm>=1 && mm<=12) return `${m[3]}-${pad2(mm)}-${pad2(dd)}`;
   }
   return null;
+}
+function extractFecha(text){
+  // Prioriza la fecha etiquetada explícitamente como "F. Emisión"/"Fecha de emisión" (frecuente en
+  // boletas electrónicas chilenas) — evita confundirla con otra fecha suelta en el cuerpo del
+  // documento, como la fecha/hora de una sesión dentro de la descripción de un ítem (ej. boletas
+  // de kinesiología que listan "Control de Kinesiología 2026-08-10 16:00:00 ..." en la misma línea).
+  const etiquetada = extractLabeled(text, ["f\\.?\\s*emisi[oó]n", "fecha\\s*(?:de\\s*)?emisi[oó]n"], ["fecha\\s*(?:de\\s*)?venc", "hora","rut"]);
+  const fechaEtiquetada = etiquetada ? parseFechaFragmento(etiquetada) : null;
+  if(fechaEtiquetada) return fechaEtiquetada;
+  return parseFechaFragmento(text);
 }
 
 function extractMonto(text){
@@ -960,6 +1057,7 @@ function extractDetalle(text, tipo){
   if(normalizeText(text).includes("kinesiolog")){
     const count = (text.match(/atenci[oó]n\s*kinesiol[oó]gica/gi)||[]).length;
     if(count > 0) return `${count} ${count>1?"sesiones":"sesión"} de kinesiología`;
+    if(/control\s*de\s*kinesiolog[ií]a/i.test(text)) return "Control de kinesiología";
   }
   if(tipo === "boleta_medica"){
     let m = text.match(/por atenci[oó]n profesional:?\s*\n?\s*([^\n]{3,90})/i);
@@ -1012,10 +1110,15 @@ const ESPECIALIDADES_LABEL = {
 
 // Busca "Dr." / "Dra." seguido del nombre del profesional, restringido a la misma línea (para no
 // "engancharse" con la línea siguiente del documento). Captura hasta 3 palabras con mayúscula inicial.
+// Si no hay "Dr./Dra." (frecuente en boletas de kinesiólogos, donde el profesional no se trata de
+// "doctor"), busca un nombre seguido directamente de "Kinesiólogo/a" en la misma línea — como en
+// "Roman Crespo Kinesiologo" — que es como suelen venir firmadas estas boletas.
 function extractNombreDoctorMatch(text){
   const m = text.match(/\bDra?\.?[ \t]+((?:[A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ'’-]+[ \t]*){1,3})/);
-  if(!m) return null;
-  return { nombre: m[1].trim().replace(/[ \t]+/g," "), index: m.index, matchLen: m[0].length };
+  if(m) return { nombre: m[1].trim().replace(/[ \t]+/g," "), index: m.index, matchLen: m[0].length };
+  const m2 = text.match(/((?:[A-ZÁÉÍÓÚÑ][a-záéíóúñ'’-]+[ \t]+){1,3})Kinesi[oó]log[oa]\b/);
+  if(m2) return { nombre: m2[1].trim().replace(/[ \t]+/g," "), index: m2.index, matchLen: m2[0].length };
+  return null;
 }
 // Nombre completo del doctor tal como aparece (ej. "Heather Strain"), para el campo "Doctor".
 function extractNombreDoctor(text){
@@ -1046,7 +1149,10 @@ function extractRutDoctor(text){
   const RUT_RE = /(\d{1,2}\.?\d{3}\.?\d{3}[-\.]?[\dkK])/;
   const nm = extractNombreDoctorMatch(text);
   if(nm){
-    const tail = text.slice(nm.index, nm.index + nm.matchLen + 80);
+    // Busca también un poco antes del nombre, no solo después: en boletas de kinesiólogos el RUT
+    // del profesional suele venir justo delante del nombre en la misma línea (ej. "16561599-9 Roman Crespo Kinesiologo").
+    const start = Math.max(0, nm.index - 40);
+    const tail = text.slice(start, nm.index + nm.matchLen + 80);
     const m = tail.match(RUT_RE);
     if(m) return m[1];
   }
@@ -1170,6 +1276,11 @@ function classifyAndExtract(text){
     // Distingue orden médica (sin monto: es una indicación, no una boleta pagada) de boleta (con monto).
     best = monto ? "boleta_examen" : "orden_examen";
   }
+  if(best === "boleta_medica" && !monto && norm.includes("kinesiolog")){
+    // Igual que con exámenes: si es de kinesiología y no se encontró ningún monto, es más probable
+    // que sea la orden médica/indicación (sin cobro) que respalda las sesiones, no una boleta pagada.
+    best = "orden_kinesiologia";
+  }
   const pacienteTexto = extractPaciente(text);
   const pacienteMatch = matchPaciente(text, pacienteTexto);
   const fecha = extractFecha(text);
@@ -1178,7 +1289,11 @@ function classifyAndExtract(text){
   const detalle = extractDetalle(text, best);
   const doctor = extractNombreDoctor(text);
   const rutDoctor = extractRutDoctor(text);
-  const tipoConsulta = extractGiroTipoConsulta(text);
+  // Primero busca una especialidad reconocida en TODO el documento (más confiable — por ejemplo,
+  // en boletas de kinesiología suele aparecer en la línea del ítem/prestador, no en el "Giro"), y
+  // solo si no encuentra ninguna recurre al texto crudo del campo "Giro" (que a veces trae basura
+  // como "Sin giro" cuando ese campo describe a la empresa que factura, no el tipo de atención).
+  const tipoConsulta = extractEspecialidad(text) || extractGiroTipoConsulta(text);
   const nombreArchivo = generarNombreDocumento(best, text, {fecha, monto, prestador, numeroBoleta});
   return {
     tipoDocumento: best,
@@ -1230,7 +1345,7 @@ async function processNextInQueue(){
 function computeStats(){
   const trackable = items.filter(i=>!esDocumentoReferencia(i));
   const total = trackable.length;
-  let pendiente=0, enIsapre=0, aprobadaIsapreEsperaSeguro=0, enSeguro=0, rechazados=0, finalizados=0, totalReembolsado=0;
+  let pendiente=0, enIsapre=0, aprobadaIsapreEsperaSeguro=0, enSeguro=0, rechazados=0, finalizados=0, totalReembolsado=0, porRevisar=0;
   for(const item of trackable){
     const eg = computeEstadoGeneral(item);
     if(eg==="pendiente") pendiente++;
@@ -1239,8 +1354,9 @@ function computeStats(){
     else if(eg==="en_seguro") enSeguro++;
     else if(eg==="rechazada_isapre" || eg==="rechazada_seguro") rechazados++;
     else if(eg==="finalizado"){ finalizados++; totalReembolsado += Number((item.seguro&&item.seguro.montoAprobado)||0); }
+    if(etapasPorRevisar(item).length) porRevisar++;
   }
-  return {total, pendiente, enIsapre, aprobadaIsapreEsperaSeguro, enSeguro, rechazados, finalizados, totalReembolsado};
+  return {total, pendiente, enIsapre, aprobadaIsapreEsperaSeguro, enSeguro, rechazados, finalizados, totalReembolsado, porRevisar};
 }
 
 function renderStats(){
@@ -1254,6 +1370,7 @@ function renderStats(){
     <div class="stat"><div class="n">${s.rechazados}</div><div class="l">Rechazados</div></div>
     <div class="stat"><div class="n">${s.finalizados}</div><div class="l">Finalizados</div></div>
     <div class="stat"><div class="n">${fmtCLP(s.totalReembolsado)}</div><div class="l">Total reembolsado</div></div>
+    <div class="stat" style="${s.porRevisar?'':'opacity:.5;'}"><div class="n">${s.porRevisar}</div><div class="l">⏰ Por revisar (llegó la fecha estimada)</div></div>
   `;
 }
 
@@ -1304,7 +1421,14 @@ function renderGrid(){
       if(venc) recetaTagHtml = `<span class="doctype-badge ${vig?'low':'danger'}">${vig?('Vigente hasta '+fmtDate(venc)):'Receta vencida'}</span>`;
     } else if(item.tipoDocumento === "boleta_medicamentos" && !item.recetaId){
       recetaTagHtml = `<span class="doctype-badge warn">⚠️ sin receta</span>`;
+    } else if(item.tipoDocumento === "boleta_medica" && esKinesiologia(item.tipoConsulta) && !item.recetaId){
+      recetaTagHtml = `<span class="doctype-badge warn">⚠️ sin orden de kine</span>`;
     }
+
+    const revisar = etapasPorRevisar(item);
+    const revisarTagHtml = revisar.length
+      ? `<span class="doctype-badge warn">⏰ Revisar estado (${revisar.map(e=>e==="seguro"?"Zurich":"Isapre").join(" y ")})</span>`
+      : "";
 
     return `
       <div class="row-item" data-id="${item.id}">
@@ -1319,6 +1443,7 @@ function renderGrid(){
             ${item.tipoDocumento ? `<span class="doctype-badge">📄 ${escapeHtml(DOC_TYPES[item.tipoDocumento]||item.tipoDocumento)}</span>` : ""}
             ${(!item.requiereIsapre && !esDocumentoReferencia(item)) ? `<span class="doctype-badge low">→ directo a seguro</span>` : ""}
             ${recetaTagHtml}
+            ${revisarTagHtml}
             ${nFotos ? `<span class="doctype-badge low">🖼️ ${nFotos} documento${nFotos>1?"s":""}</span>` : `<span class="doctype-badge low">Sin foto</span>`}
             ${esCandidatoLimpieza(item) ? `<span class="doctype-badge low">🗑️ liberar espacio</span>` : ""}
           </div>
@@ -1360,16 +1485,95 @@ function esElegibleSeguro(item){
   if(item.requiereIsapre) return (item.isapre||nuevaEtapa()).estado === "aprobada";
   return true;
 }
+// Una prestación es "consultable en Zurich" cuando su etapa de seguro ya fue enviada y sigue
+// esperando resolución — es decir, hay algo real que ir a revisar al portal de Zurich.
+function esConsultableZurich(item){
+  return !esDocumentoReferencia(item) && (item.seguro||nuevaEtapa()).estado === "enviada";
+}
 function updateExportButton(){
   const seleccionados = items.filter(i=>selectedIds.has(i.id));
   const nIsapre = seleccionados.filter(esElegibleIsapre).length;
   const nSeguro = seleccionados.filter(esElegibleSeguro).length;
+  const nConsultarZurich = seleccionados.filter(esConsultableZurich).length;
   const btnI = document.getElementById("btnExportZipIsapre");
   const btnS = document.getElementById("btnExportZipSeguro");
+  const btnCZ = document.getElementById("btnConsultarZurich");
   btnI.textContent = `📦 Carpeta para Isapre (${nIsapre})`;
   btnI.disabled = nIsapre===0;
   btnS.textContent = `📦 Carpeta para el Seguro (${nSeguro})`;
   btnS.disabled = nSeguro===0;
+  if(btnCZ){
+    btnCZ.textContent = `🔍 Consultar Zurich seleccionados (${nConsultarZurich})`;
+    btnCZ.disabled = nConsultarZurich===0;
+  }
+}
+
+// Abre el portal de Zurich y arma un mini-formulario con una fila por cada reembolso de Zurich
+// seleccionado, para que el usuario marque de una vez lo que encontró en el portal para cada uno.
+// Deliberadamente solo incluye etapas de "seguro" (Zurich) — nunca mezcla con etapas de isapre,
+// porque cada isapre tiene su propio portal y no tiene sentido "consultarlas" juntas.
+function abrirConsultaZurich(){
+  const seleccionados = items.filter(i=>selectedIds.has(i.id) && esConsultableZurich(i));
+  if(seleccionados.length === 0){ toast("No hay reembolsos de Zurich seleccionados para consultar"); return; }
+  window.open(ZURICH_PORTAL_URL, "_blank");
+  const body = document.getElementById("consultaBody");
+  body.innerHTML = seleccionados.map(item=>`
+    <div class="consulta-row" style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px;" data-id="${item.id}">
+      <div style="font-weight:600;font-size:13px;margin-bottom:6px;">${escapeHtml(item.descripcion||"(sin descripción)")}</div>
+      <div class="meta" style="margin-bottom:8px;">N° siniestro: ${escapeHtml((item.seguro&&item.seguro.numeroReembolso)||"-")} · Monto boleta: ${fmtCLP(item.monto)}</div>
+      <div class="row2">
+        <div class="field">
+          <label>Estado encontrado</label>
+          <select class="consulta-estado" data-id="${item.id}">
+            <option value="enviada" selected>Sigue en revisión (sin cambios)</option>
+            <option value="aprobada">Aprobado</option>
+            <option value="rechazada">Rechazado</option>
+          </select>
+        </div>
+        <div class="field consulta-monto-field" data-id="${item.id}" style="display:none;">
+          <label>Monto reembolsado (CLP)</label>
+          <input type="number" min="0" step="1" class="consulta-monto" data-id="${item.id}" placeholder="0" value="${(item.seguro&&item.seguro.montoAprobado)||""}">
+        </div>
+      </div>
+    </div>
+  `).join("");
+  body.querySelectorAll(".consulta-estado").forEach(sel=>{
+    sel.addEventListener("change", ()=>{
+      const montoField = body.querySelector(`.consulta-monto-field[data-id="${sel.dataset.id}"]`);
+      if(montoField) montoField.style.display = sel.value === "aprobada" ? "" : "none";
+    });
+  });
+  document.getElementById("consultaOverlay").classList.add("show");
+}
+async function guardarConsultaZurich(){
+  const rows = document.querySelectorAll("#consultaBody .consulta-row");
+  const hoy = todayISO();
+  let nActualizados = 0;
+  for(const row of rows){
+    const id = row.dataset.id;
+    const item = items.find(i=>i.id===id);
+    if(!item) continue;
+    const estado = row.querySelector(".consulta-estado").value;
+    if(estado === "enviada") continue; // no se marcó cambio para este reembolso
+    const montoInput = row.querySelector(".consulta-monto");
+    item.seguro = item.seguro || nuevaEtapa({fechaPago:""});
+    item.seguro.estado = estado;
+    if(estado === "aprobada"){
+      item.seguro.montoAprobado = (montoInput && montoInput.value) ? Number(montoInput.value) : null;
+    }
+    item.seguro.fechaUltimaActualizacion = hoy;
+    item.historial = item.historial || [];
+    const estadoLabel = (ETAPA_ESTADOS.find(([k])=>k===estado)||[])[1] || estado;
+    item.historial.push({fecha:new Date().toISOString(), texto:`Seguro (Zurich): estado actualizado a "${estadoLabel}" mediante consulta múltiple${estado==="aprobada"?(" — "+fmtCLP(item.seguro.montoAprobado)):""}`});
+    await dbPut(item);
+    nActualizados++;
+  }
+  document.getElementById("consultaOverlay").classList.remove("show");
+  selectedIds.clear();
+  selectMode = false;
+  document.getElementById("btnSelectMode").textContent = "Seleccionar";
+  await loadItems();
+  toast(nActualizados ? `Se actualizaron ${nActualizados} reembolso(s) de Zurich` : "No se marcó ningún cambio");
 }
 
 /* ---------------- liberar espacio: prestaciones ya finalizadas ---------------- */
@@ -1413,21 +1617,29 @@ function renderAll(){
 }
 
 /* ---------------- form (nueva / editar) ---------------- */
-// Muestra/oculta los campos del formulario según la categoría elegida y, para Remedios/Exámenes,
-// según si se está subiendo una orden médica (sin monto, solo de referencia) o una boleta pagada.
+// Muestra/oculta los campos del formulario según la categoría elegida y, para Remedios/Exámenes
+// (y Consultas → Kinesiología), según si se está subiendo una orden médica (sin monto, solo de
+// referencia) o una boleta pagada.
 function actualizarVisibilidadCampos(){
   const categoria = document.getElementById("fCategoria").value;
   const tipoRegistro = document.getElementById("fTipoRegistro").value;
+  const subcategoria = document.getElementById("fTipoConsulta").value;
   const esRemedioOExamen = categoria === "Remedios" || categoria === "Exámenes";
   const esConsulta = categoria === "Consultas";
-  const esOrden = esRemedioOExamen && tipoRegistro === "orden";
+  const esConsultaKine = esConsulta && esKinesiologia(subcategoria);
+  // Solo Kinesiología, dentro de Consultas, admite subir una orden médica aparte (como Remedios con
+  // las recetas) — el resto de las especialidades se siguen registrando siempre como boleta.
+  const puedeSerOrden = esRemedioOExamen || esConsultaKine;
+  const esOrden = puedeSerOrden && tipoRegistro === "orden";
+  const tieneDocReferencia = categoria === "Remedios" || esConsultaKine;
 
   document.getElementById("subcategoriaField").style.display = esConsulta ? "" : "none";
-  document.getElementById("tipoRegistroField").style.display = esRemedioOExamen ? "" : "none";
-  document.getElementById("recetaField").style.display = (categoria === "Remedios" && tipoRegistro === "boleta") ? "" : "none";
+  document.getElementById("tipoRegistroField").style.display = puedeSerOrden ? "" : "none";
+  document.getElementById("recetaField").style.display = (tieneDocReferencia && tipoRegistro === "boleta") ? "" : "none";
   document.getElementById("numBoletaField").style.display = esOrden ? "none" : "";
   document.getElementById("montoField").style.display = esOrden ? "none" : "";
   document.getElementById("directoSeguroField").style.display = esOrden ? "none" : "";
+  poblarSelectReceta(document.getElementById("fPaciente").value, document.getElementById("fReceta").value);
   renderRecetaHint();
 }
 function openForm(item, autofill){
@@ -1461,12 +1673,17 @@ function openForm(item, autofill){
   document.getElementById("fMonto").value = item ? item.monto : ((g && g.monto) || "");
   const pacienteSeleccionado = item ? (item.paciente || "") : ((g && g.pacienteId) || "");
   document.getElementById("fPaciente").value = pacienteSeleccionado;
-  // Si es una boleta de medicamentos detectada por OCR y sabemos el paciente, sugiere la receta
-  // vigente más reciente de esa persona (el usuario puede cambiarla o quitarla).
+  // Si es una boleta de medicamentos (o de kinesiología) detectada por OCR y sabemos el paciente,
+  // sugiere la receta/orden vigente más reciente de esa persona (el usuario puede cambiarla o quitarla).
   let recetaSugeridaId = item ? (item.recetaId || "") : "";
-  if(!item && g && g.tipoDocumento === "boleta_medicamentos" && g.pacienteId){
-    const candidatas = recetasVigentes(g.pacienteId).sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||""));
-    if(candidatas.length) recetaSugeridaId = candidatas[0].id;
+  if(!item && g && g.pacienteId){
+    if(g.tipoDocumento === "boleta_medicamentos"){
+      const candidatas = recetasVigentes(g.pacienteId).sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||""));
+      if(candidatas.length) recetaSugeridaId = candidatas[0].id;
+    } else if(g.tipoDocumento === "boleta_medica" && esKinesiologia(g.tipoConsulta)){
+      const candidatas = ordenesKineDisponibles(g.pacienteId).sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||""));
+      if(candidatas.length) recetaSugeridaId = candidatas[0].id;
+    }
   }
   poblarSelectReceta(pacienteSeleccionado, recetaSugeridaId);
   // El checkbox se muestra invertido ("Pasar directo a seguro"): marcado = NO pasa por isapre.
@@ -1568,6 +1785,15 @@ function openDetail(id){
     } else {
       recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;color:var(--amber);">⚠️ Esta compra no tiene una receta vinculada.</div>`;
     }
+  } else if(item.tipoDocumento === "orden_kinesiologia"){
+    recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;">Orden médica de kinesiología — sin fecha de vencimiento (respaldo de referencia).</div>`;
+  } else if(item.tipoDocumento === "boleta_medica" && esKinesiologia(item.tipoConsulta)){
+    const orden = item.recetaId ? items.find(i=>i.id===item.recetaId) : null;
+    if(orden){
+      recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;">Orden vinculada: <b>${escapeHtml(orden.descripcion||"Orden de kinesiología")}</b> — ${fmtDate(orden.fecha)}</div>`;
+    } else {
+      recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;color:var(--amber);">⚠️ Esta sesión no tiene una orden de kinesiología vinculada.</div>`;
+    }
   }
 
   const limpiezaHtml = (!esReferencia && esCandidatoLimpieza(item)) ? `
@@ -1592,8 +1818,8 @@ function openDetail(id){
     </div>
 
     <div id="seguroBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${seguroAtenuado?"opacity:.55;":""}">
-      <div style="font-weight:700;font-size:13px;margin-bottom:8px;">2️⃣ Seguro complementario</div>
-      ${etapaBoxHtml("Seguro", seguro, {numLabel:"siniestro / reembolso seguro", fechaPago:true})}
+      <div style="font-weight:700;font-size:13px;margin-bottom:8px;">2️⃣ Seguro complementario (Zurich)</div>
+      ${etapaBoxHtml("Seguro", seguro, {numLabel:"siniestro / reembolso seguro", fechaPago:true, consultarUrl:ZURICH_PORTAL_URL})}
       ${seguro.estado==="no_enviada" ? chuletaBoxHtml(item, "seguro") : ""}
     </div>
   `;
@@ -1629,6 +1855,22 @@ function openDetail(id){
     });
   }
 
+  ["Isapre","Seguro"].forEach(prefix=>{
+    const btn = document.getElementById(`d${prefix}BtnConsultar`);
+    if(!btn) return;
+    btn.addEventListener("click", ()=>{
+      const url = btn.dataset.url;
+      if(url){
+        window.open(url, "_blank");
+        toast("Revisa el estado en el portal y vuelve a marcarlo aquí abajo");
+      } else {
+        toast("Revisa el portal de tu isapre y actualiza el estado abajo");
+      }
+      document.getElementById(`d${prefix}Estado`).scrollIntoView({behavior:"smooth", block:"center"});
+      document.getElementById(`d${prefix}Estado`).focus();
+    });
+  });
+
   const btnLimpiarItem = document.getElementById("btnLimpiarFotosItem");
   if(btnLimpiarItem){
     btnLimpiarItem.addEventListener("click", async ()=>{
@@ -1649,15 +1891,19 @@ function openDetail(id){
         item.requiereIsapre = nuevoRequiere;
       }
       const nuevaIsapre = readEtapaFromForm("Isapre", false);
+      const isapreCambioEstadoOMonto = (nuevaIsapre.estado !== isapre.estado) || (nuevaIsapre.montoAprobado !== isapre.montoAprobado);
       if(nuevaIsapre.estado !== isapre.estado){
         cambios.push(`Isapre: estado cambiado a "${ETAPA_ESTADOS.find(([k])=>k===nuevaIsapre.estado)[1]}"`);
       }
+      nuevaIsapre.fechaUltimaActualizacion = isapreCambioEstadoOMonto ? todayISO() : (isapre.fechaUltimaActualizacion || "");
       item.isapre = nuevaIsapre;
 
       const nuevoSeguro = readEtapaFromForm("Seguro", true);
+      const seguroCambioEstadoOMonto = (nuevoSeguro.estado !== seguro.estado) || (nuevoSeguro.montoAprobado !== seguro.montoAprobado);
       if(nuevoSeguro.estado !== seguro.estado){
         cambios.push(`Seguro: estado cambiado a "${ETAPA_ESTADOS.find(([k])=>k===nuevoSeguro.estado)[1]}"`);
       }
+      nuevoSeguro.fechaUltimaActualizacion = seguroCambioEstadoOMonto ? todayISO() : (seguro.fechaUltimaActualizacion || "");
       item.seguro = nuevoSeguro;
     }
     const nota = document.getElementById("dNota").value.trim();
@@ -2013,29 +2259,43 @@ function poblarSelectsPacientes(){
   document.getElementById("filterPaciente").innerHTML = '<option value="">Todos los pacientes</option>' + opciones;
 }
 
-// Llena el selector "Receta que respalda esta compra" con las recetas (órdenes de medicamentos)
-// vigentes del paciente elegido (o de todos, si aún no se eligió paciente).
+// Llena el selector de documento de referencia vinculado (recetas de medicamentos u órdenes de
+// kinesiología, según la categoría/subcategoría actual del formulario) con las disponibles del
+// paciente elegido (o de todos, si aún no se eligió paciente), y ajusta la etiqueta del campo.
 function poblarSelectReceta(pacienteId, currentId){
   const sel = document.getElementById("fReceta");
   if(!sel) return;
-  const vigentes = recetasVigentes(pacienteId).sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||""));
-  const opciones = vigentes.map(o=>{
-    const venc = recetaVencimiento(o);
-    return `<option value="${o.id}">${escapeHtml(o.descripcion || "Receta")} — ${fmtDate(o.fecha)}${venc?(" (vence "+fmtDate(venc)+")"):""}</option>`;
+  const categoria = document.getElementById("fCategoria").value;
+  const subcategoria = document.getElementById("fTipoConsulta").value;
+  const tipoRef = tipoDocReferenciaParaForm(categoria, subcategoria);
+  const esReceta = tipoRef === "orden_medicamentos";
+  const disponibles = (tipoRef === "orden_medicamentos" ? recetasVigentes(pacienteId)
+    : tipoRef === "orden_kinesiologia" ? ordenesKineDisponibles(pacienteId)
+    : []).sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||""));
+  const opciones = disponibles.map(o=>{
+    const venc = esReceta ? recetaVencimiento(o) : null;
+    return `<option value="${o.id}">${escapeHtml(o.descripcion || (esReceta?"Receta":"Orden"))} — ${fmtDate(o.fecha)}${venc?(" (vence "+fmtDate(venc)+")"):""}</option>`;
   }).join("");
-  sel.innerHTML = '<option value="">Sin receta vinculada</option>' + opciones;
-  sel.value = (currentId && vigentes.some(o=>o.id===currentId)) ? currentId : "";
+  sel.innerHTML = `<option value="">${esReceta ? "Sin receta vinculada" : "Sin orden vinculada"}</option>` + opciones;
+  sel.value = (currentId && disponibles.some(o=>o.id===currentId)) ? currentId : "";
+  const label = document.querySelector('#recetaField label');
+  if(label) label.textContent = esReceta ? "Receta que respalda esta compra" : "Orden de kinesiología que respalda esta sesión";
 }
 function renderRecetaHint(){
   const hint = document.getElementById("recetaHint");
   if(!hint) return;
   const categoria = document.getElementById("fCategoria").value;
+  const subcategoria = document.getElementById("fTipoConsulta").value;
   const recetaId = document.getElementById("fReceta").value;
   const tipoRegistroEl = document.getElementById("fTipoRegistro");
   const esBoleta = tipoRegistroEl ? tipoRegistroEl.value === "boleta" : true;
+  const esConsultaKine = categoria === "Consultas" && esKinesiologia(subcategoria);
   if(categoria === "Remedios" && esBoleta && !recetaId){
     hint.style.display = "block";
     hint.textContent = "⚠️ No hay una receta vigente vinculada a esta compra — revisa que tengas la orden médica de respaldo, o déjala sin vincular si no aplica.";
+  } else if(esConsultaKine && esBoleta && !recetaId){
+    hint.style.display = "block";
+    hint.textContent = "⚠️ No hay una orden médica de kinesiología vinculada a esta sesión — revisa que tengas la orden que la respalda, o déjala sin vincular si no aplica.";
   } else {
     hint.style.display = "none";
   }
@@ -2074,6 +2334,9 @@ async function init(){
     actualizarVisibilidadCampos();
   });
   document.getElementById("fTipoRegistro").addEventListener("change", actualizarVisibilidadCampos);
+  // Mientras el usuario escribe la subcategoría (ej. "Kinesiología"), va mostrando/ocultando en vivo
+  // el selector "¿Qué estás subiendo?" y el campo de orden vinculada — solo aplica para esa especialidad.
+  document.getElementById("fTipoConsulta").addEventListener("input", actualizarVisibilidadCampos);
   document.getElementById("fPaciente").addEventListener("change", ()=>{
     poblarSelectReceta(document.getElementById("fPaciente").value, document.getElementById("fReceta").value);
     renderRecetaHint();
@@ -2090,7 +2353,7 @@ async function init(){
     // manualmente), se conserva tal cual; en cualquier otro caso se deduce de categoría + tipo de registro.
     const tipoDocumentoFinal = (pendingTipoDocumento && LEGACY_TIPO_DOCUMENTO.has(pendingTipoDocumento))
       ? pendingTipoDocumento
-      : inferirTipoDocumento(categoriaForm, tipoRegistroForm);
+      : inferirTipoDocumento(categoriaForm, tipoRegistroForm, document.getElementById("fTipoConsulta").value.trim());
     const item = {
       id: editingId || uid(),
       fecha: document.getElementById("fFecha").value,
@@ -2162,6 +2425,10 @@ async function init(){
   });
   document.getElementById("btnExportZipIsapre").addEventListener("click", exportZipIsapre);
   document.getElementById("btnExportZipSeguro").addEventListener("click", exportZipSeguro);
+  document.getElementById("btnConsultarZurich").addEventListener("click", abrirConsultaZurich);
+  document.getElementById("btnConsultaCancelar").addEventListener("click", ()=>document.getElementById("consultaOverlay").classList.remove("show"));
+  document.getElementById("btnConsultaGuardarTodos").addEventListener("click", guardarConsultaZurich);
+  document.getElementById("consultaOverlay").addEventListener("click", (e)=>{ if(e.target.id==="consultaOverlay") document.getElementById("consultaOverlay").classList.remove("show"); });
   document.getElementById("btnLimpiarFinalizados").addEventListener("click", limpiarEspacioFinalizados);
 
   document.getElementById("btnBackup").addEventListener("click", backup);
