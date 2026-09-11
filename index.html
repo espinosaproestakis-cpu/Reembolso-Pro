@@ -61,6 +61,19 @@
     .row-item .row-desc{max-width:100%;white-space:normal;}
   }
 
+  .table-wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);}
+  table.tabla-boletas{border-collapse:collapse;width:100%;font-size:12.5px;white-space:nowrap;}
+  table.tabla-boletas th, table.tabla-boletas td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;}
+  table.tabla-boletas th{background:var(--gray-bg);color:var(--muted);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.02em;}
+  table.tabla-boletas th.grp-isapre, table.tabla-boletas th.grp-seguro, table.tabla-boletas th.grp-total{border-left:2px solid var(--line);}
+  table.tabla-boletas td.grp-isapre, table.tabla-boletas td.grp-seguro, table.tabla-boletas td.grp-total{border-left:2px solid var(--line);}
+  table.tabla-boletas td.num, table.tabla-boletas th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  table.tabla-boletas tbody tr{cursor:pointer;}
+  table.tabla-boletas tbody tr:hover{background:var(--primary-light);}
+  table.tabla-boletas tfoot td{font-weight:700;background:var(--gray-bg);border-top:2px solid var(--line);}
+  table.tabla-boletas .gastado-pos{color:var(--red);}
+  table.tabla-boletas .gastado-cero{color:var(--green);}
+
   .badge{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;white-space:nowrap;}
   .badge.pendiente{background:var(--gray-bg);color:var(--muted);}
   .badge.lista{background:var(--purple-bg);color:var(--purple);}
@@ -185,9 +198,37 @@
     <button class="btn-primary btn-sm" id="btnExportZipSeguro" disabled>📦 Carpeta para el Seguro (0)</button>
     <button class="btn-secondary btn-sm" id="btnConsultarZurich" disabled title="Abre el portal de Zurich y te permite actualizar el estado de varios reembolsos a la vez. Solo incluye reembolsos ya enviados al seguro (Zurich) — no mezcla con isapre.">🔍 Consultar Zurich seleccionados (0)</button>
     <button class="btn-secondary btn-sm" id="btnLimpiarFinalizados" disabled title="Elimina las fotos/documentos de prestaciones ya finalizadas por el seguro, conservando todos los datos">🧹 Liberar espacio (0)</button>
+    <button class="btn-secondary btn-sm" id="btnToggleVista" title="Alterna entre la vista de tarjetas y una tabla con el detalle de reembolso de cada boleta">📊 Vista tabla</button>
   </div>
 
   <div class="list" id="grid"></div>
+  <div class="table-wrap" id="tableViewWrap" style="display:none;">
+    <table class="tabla-boletas" id="tablaBoletas">
+      <thead>
+        <tr>
+          <th>Categoría</th>
+          <th>Subcategoría</th>
+          <th>Detalle</th>
+          <th>RUT prestador/doctor</th>
+          <th>N° de boleta</th>
+          <th class="num">Cant. sesiones</th>
+          <th>Fecha</th>
+          <th class="num">Monto total</th>
+          <th class="grp-isapre">Fecha envío isapre</th>
+          <th>N° caso isapre</th>
+          <th class="num">Monto reemb. isapre</th>
+          <th class="grp-seguro">Fecha envío Zurich</th>
+          <th>N° caso Zurich</th>
+          <th class="num">Monto reemb. Zurich</th>
+          <th class="num grp-total">Total reembolsado</th>
+          <th class="num">Total gastado</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tablaBoletasBody"></tbody>
+      <tfoot id="tablaBoletasFoot"></tfoot>
+    </table>
+  </div>
   <div class="empty-state" id="emptyState" style="display:none;">
     <div class="big">📄</div>
     <div>Aún no registras prestaciones.</div>
@@ -480,6 +521,9 @@ let editingId = null;
 let selectMode = false;
 let selectedIds = new Set();
 let storageUsable = true;
+// "tarjetas" (por defecto) o "tabla" — alterna entre la vista de tarjetas y la tabla con el
+// detalle de reembolso (isapre/Zurich) de cada boleta. Ver btnToggleVista / renderTablaBoletas.
+let viewMode = "tarjetas";
 
 /* ---------------- flujo de dos etapas: Isapre -> Seguro complementario ---------------- */
 // Portal del seguro complementario (Zurich) — se usa como acceso directo desde el botón
@@ -1730,6 +1774,110 @@ function renderGrid(){
   });
 }
 
+// Vista tabla: solo boletas con monto propio (nunca órdenes/recetas de referencia, que no tienen
+// monto ni pasan por isapre/seguro). Reutiliza los mismos filtros de la vista de tarjetas.
+function esBoletaParaTabla(item){
+  return /^boleta_/.test(item.tipoDocumento || "");
+}
+// Total reembolsado = monto aprobado por isapre + monto aprobado por el seguro (Zurich).
+function totalReembolsadoItem(item){
+  const montoIsapre = Number(item.isapre && item.isapre.montoAprobado) || 0;
+  const montoSeguro = Number(item.seguro && item.seguro.montoAprobado) || 0;
+  return montoIsapre + montoSeguro;
+}
+// Total gastado = monto total de la boleta - total reembolsado (lo que quedó efectivamente sin cubrir).
+function totalGastadoItem(item){
+  return (Number(item.monto)||0) - totalReembolsadoItem(item);
+}
+function renderTablaBoletas(){
+  const wrap = document.getElementById("tableViewWrap");
+  const grid = document.getElementById("grid");
+  if(!wrap || !grid) return;
+  const enTabla = viewMode === "tabla";
+  wrap.style.display = enTabla ? "" : "none";
+  grid.style.display = enTabla ? "none" : (items.length===0 ? "none" : "flex");
+  if(!enTabla) return;
+
+  const list = filteredItems().filter(esBoletaParaTabla);
+  const tbody = document.getElementById("tablaBoletasBody");
+  const tfoot = document.getElementById("tablaBoletasFoot");
+  if(!tbody) return;
+
+  if(list.length === 0){
+    tbody.innerHTML = `<tr><td colspan="17" style="text-align:center;color:var(--muted);padding:20px;">No hay boletas que coincidan con los filtros actuales.</td></tr>`;
+    if(tfoot) tfoot.innerHTML = "";
+    return;
+  }
+
+  let totMonto=0, totIsapre=0, totSeguro=0, totReembolsado=0, totGastado=0;
+  tbody.innerHTML = list.map(item=>{
+    const isapre = item.isapre || nuevaEtapa();
+    const seguro = item.seguro || nuevaEtapa({fechaPago:""});
+    const montoTotal = Number(item.monto)||0;
+    const montoIsapre = Number(isapre.montoAprobado)||0;
+    const montoSeguro = Number(seguro.montoAprobado)||0;
+    const totalReembolsado = totalReembolsadoItem(item);
+    const totalGastado = totalGastadoItem(item);
+    totMonto += montoTotal; totIsapre += montoIsapre; totSeguro += montoSeguro;
+    totReembolsado += totalReembolsado; totGastado += totalGastado;
+    const rutPrestadorDoctor = item.rutPrestador || item.rutDoctor || "";
+    const gastadoCls = totalGastado > 0 ? "gastado-pos" : (totalGastado === 0 ? "gastado-cero" : "");
+    return `
+      <tr data-id="${item.id}" class="open-detail-row">
+        <td>${escapeHtml(item.categoria||"")}</td>
+        <td>${escapeHtml(item.tipoConsulta||"")}</td>
+        <td>${escapeHtml(item.descripcion||"")}</td>
+        <td>${escapeHtml(rutPrestadorDoctor)}</td>
+        <td>${escapeHtml(item.numeroBoleta||"")}</td>
+        <td class="num">${item.cantidadSesiones!=null ? item.cantidadSesiones : ""}</td>
+        <td>${fmtDate(item.fecha)}</td>
+        <td class="num">${fmtCLP(montoTotal)}</td>
+        <td class="grp-isapre">${isapre.fechaEnvio ? fmtDate(isapre.fechaEnvio) : ""}</td>
+        <td>${escapeHtml(isapre.numeroReembolso||"")}</td>
+        <td class="num">${montoIsapre ? fmtCLP(montoIsapre) : ""}</td>
+        <td class="grp-seguro">${seguro.fechaEnvio ? fmtDate(seguro.fechaEnvio) : ""}</td>
+        <td>${escapeHtml(seguro.numeroReembolso||"")}</td>
+        <td class="num">${montoSeguro ? fmtCLP(montoSeguro) : ""}</td>
+        <td class="num grp-total">${fmtCLP(totalReembolsado)}</td>
+        <td class="num ${gastadoCls}">${fmtCLP(totalGastado)}</td>
+        <td><button class="btn-ghost btn-sm open-detail" data-id="${item.id}">Ver →</button></td>
+      </tr>
+    `;
+  }).join("");
+
+  if(tfoot){
+    tfoot.innerHTML = `
+      <tr>
+        <td colspan="7">Totales (${list.length} boleta${list.length===1?"":"s"})</td>
+        <td class="num">${fmtCLP(totMonto)}</td>
+        <td class="grp-isapre"></td>
+        <td></td>
+        <td class="num">${fmtCLP(totIsapre)}</td>
+        <td class="grp-seguro"></td>
+        <td></td>
+        <td class="num">${fmtCLP(totSeguro)}</td>
+        <td class="num grp-total">${fmtCLP(totReembolsado)}</td>
+        <td class="num">${fmtCLP(totGastado)}</td>
+        <td></td>
+      </tr>
+    `;
+  }
+
+  tbody.querySelectorAll(".open-detail").forEach(btn=>{
+    btn.addEventListener("click", (e)=>{ e.stopPropagation(); openDetail(btn.dataset.id); });
+  });
+  tbody.querySelectorAll(".open-detail-row").forEach(row=>{
+    row.addEventListener("click", ()=> openDetail(row.dataset.id));
+  });
+}
+function toggleVista(){
+  viewMode = viewMode === "tabla" ? "tarjetas" : "tabla";
+  const btn = document.getElementById("btnToggleVista");
+  if(btn) btn.textContent = viewMode === "tabla" ? "🗂️ Vista tarjetas" : "📊 Vista tabla";
+  renderGrid();
+  renderTablaBoletas();
+}
+
 function esElegibleIsapre(item){
   return !esDocumentoReferencia(item) && item.requiereIsapre && (item.isapre||nuevaEtapa()).estado === "no_enviada";
 }
@@ -1867,6 +2015,7 @@ function renderAll(){
   renderStats();
   refreshCategoriaFilter();
   renderGrid();
+  renderTablaBoletas();
   updateExportButton();
   updateLimpiarButton();
 }
@@ -2866,10 +3015,12 @@ async function init(){
     toast("Prestación eliminada");
   });
 
+  function renderVisible(){ renderGrid(); renderTablaBoletas(); }
   ["filterEstado","filterCategoria","filterTipoDoc","filterPaciente"].forEach(id=>{
-    document.getElementById(id).addEventListener("change", renderGrid);
+    document.getElementById(id).addEventListener("change", renderVisible);
   });
-  document.getElementById("filterTexto").addEventListener("input", renderGrid);
+  document.getElementById("filterTexto").addEventListener("input", renderVisible);
+  document.getElementById("btnToggleVista").addEventListener("click", toggleVista);
 
   document.getElementById("btnSelectMode").addEventListener("click", ()=>{
     selectMode = !selectMode;
