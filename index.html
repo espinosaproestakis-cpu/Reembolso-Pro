@@ -47,33 +47,22 @@
   .spacer{flex:1;}
 
   .list{display:flex;flex-direction:column;gap:8px;}
-  .row-item{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:10px 14px;display:flex;align-items:center;gap:12px;position:relative;}
-  .row-item .row-check{width:18px;height:18px;flex:0 0 auto;}
-  .row-item .row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
-  .row-item .row-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-  .row-item .row-desc{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px;}
-  .row-item .row-meta{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .row-item .row-tags{display:flex;gap:4px;flex-wrap:wrap;}
-  .row-item .row-amount{font-weight:700;font-size:14px;white-space:nowrap;flex:0 0 auto;}
-  .row-item .row-actions{flex:0 0 auto;}
-  @media (max-width:640px){
-    .row-item{flex-wrap:wrap;}
-    .row-item .row-desc{max-width:100%;white-space:normal;}
-  }
 
   .table-wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);}
-  table.tabla-boletas{border-collapse:collapse;width:100%;font-size:12.5px;white-space:nowrap;}
-  table.tabla-boletas th, table.tabla-boletas td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;}
-  table.tabla-boletas th{background:var(--gray-bg);color:var(--muted);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.02em;}
-  table.tabla-boletas th.grp-isapre, table.tabla-boletas th.grp-seguro, table.tabla-boletas th.grp-total{border-left:2px solid var(--line);}
-  table.tabla-boletas th.grp-header{text-align:center;font-size:11px;}
-  table.tabla-boletas td.grp-isapre, table.tabla-boletas td.grp-seguro, table.tabla-boletas td.grp-total{border-left:2px solid var(--line);}
-  table.tabla-boletas td.num, table.tabla-boletas th.num{text-align:right;font-variant-numeric:tabular-nums;}
-  table.tabla-boletas tbody tr{cursor:pointer;}
-  table.tabla-boletas tbody tr:hover{background:var(--primary-light);}
-  table.tabla-boletas tfoot td{font-weight:700;background:var(--gray-bg);border-top:2px solid var(--line);}
-  table.tabla-boletas .gastado-pos{color:var(--red);}
-  table.tabla-boletas .gastado-cero{color:var(--green);}
+  table.tabla-app{border-collapse:collapse;width:100%;font-size:12.5px;white-space:nowrap;}
+  table.tabla-app th, table.tabla-app td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;}
+  table.tabla-app th{background:var(--gray-bg);color:var(--muted);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.02em;}
+  table.tabla-app th.grp-isapre, table.tabla-app th.grp-seguro, table.tabla-app th.grp-total{border-left:2px solid var(--line);}
+  table.tabla-app th.grp-header{text-align:center;font-size:11px;}
+  table.tabla-app td.grp-isapre, table.tabla-app td.grp-seguro, table.tabla-app td.grp-total{border-left:2px solid var(--line);}
+  table.tabla-app td.num, table.tabla-app th.num{text-align:right;font-variant-numeric:tabular-nums;}
+  table.tabla-app tbody tr{cursor:pointer;}
+  table.tabla-app tbody tr:hover{background:var(--primary-light);}
+  table.tabla-app tfoot td{font-weight:700;background:var(--gray-bg);border-top:2px solid var(--line);}
+  table.tabla-app .gastado-pos{color:var(--red);}
+  table.tabla-app .gastado-cero{color:var(--green);}
+  table.tabla-app td.sel-cell{width:1%;text-align:center;}
+  table.tabla-app td.sel-cell input[type=checkbox]{width:16px;height:16px;}
 
   .badge{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;white-space:nowrap;}
   .badge.pendiente{background:var(--gray-bg);color:var(--muted);}
@@ -199,14 +188,31 @@
     <button class="btn-primary btn-sm" id="btnExportZipSeguro" disabled>📦 Carpeta para el Seguro (0)</button>
     <button class="btn-secondary btn-sm" id="btnConsultarZurich" disabled title="Abre el portal de Zurich y te permite actualizar el estado de varios reembolsos a la vez. Solo incluye reembolsos ya enviados al seguro (Zurich) — no mezcla con isapre.">🔍 Consultar Zurich seleccionados (0)</button>
     <button class="btn-secondary btn-sm" id="btnLimpiarFinalizados" disabled title="Elimina las fotos/documentos de prestaciones ya finalizadas por el seguro, conservando todos los datos">🧹 Liberar espacio (0)</button>
-    <button class="btn-secondary btn-sm" id="btnToggleVista" title="Alterna entre la vista de tarjetas y una tabla con el detalle de reembolso de cada boleta">📊 Vista tabla</button>
+    <button class="btn-secondary btn-sm" id="btnToggleVista" title="Alterna entre las órdenes/comprobantes de referencia y una tabla con el detalle de reembolso de cada boleta">📊 Vista tabla</button>
   </div>
 
-  <div class="list" id="grid"></div>
-  <div class="table-wrap" id="tableViewWrap" style="display:none;">
-    <table class="tabla-boletas" id="tablaBoletas">
+  <div class="table-wrap" id="ordenesViewWrap">
+    <table class="tabla-app" id="tablaOrdenes">
       <thead>
         <tr>
+          <th>Tipo</th>
+          <th>Paciente</th>
+          <th>Doctor</th>
+          <th>Fecha</th>
+          <th>Detalle</th>
+          <th></th>
+          <th></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tablaOrdenesBody"></tbody>
+    </table>
+  </div>
+  <div class="table-wrap" id="tableViewWrap" style="display:none;">
+    <table class="tabla-app" id="tablaBoletas">
+      <thead>
+        <tr>
+          <th rowspan="2"></th>
           <th rowspan="2">Tipo</th>
           <th rowspan="2">Paciente</th>
           <th rowspan="2">RUT prestador/doctor</th>
@@ -525,9 +531,10 @@ let editingId = null;
 let selectMode = false;
 let selectedIds = new Set();
 let storageUsable = true;
-// "tarjetas" (por defecto) o "tabla" — alterna entre la vista de tarjetas y la tabla con el
-// detalle de reembolso (isapre/Zurich) de cada boleta. Ver btnToggleVista / renderTablaBoletas.
-let viewMode = "tarjetas";
+// "ordenes" (por defecto) o "tabla" — alterna entre "Órdenes" (órdenes de kinesiología, recetas de
+// medicamentos, órdenes de examen y comprobantes de reembolso isapre) y "Vista tabla" (boletas, con
+// el detalle de reembolso isapre/Zurich de cada una). Ver btnToggleVista / renderOrdenes / renderTablaBoletas.
+let viewMode = "ordenes";
 
 /* ---------------- flujo de dos etapas: Isapre -> Seguro complementario ---------------- */
 // Portal del seguro complementario (Zurich) — se usa como acceso directo desde el botón
@@ -1721,81 +1728,89 @@ function filteredItems(){
     .sort((a,b)=> (b.fecha||"").localeCompare(a.fecha||"") || (b.creado||0)-(a.creado||0));
 }
 
-function renderGrid(){
-  const list = filteredItems();
-  const grid = document.getElementById("grid");
+// Apartado "Órdenes": todo documento de referencia (sin monto propio, no se envía a isapre/seguro
+// por sí solo) — órdenes de kinesiología, recetas de medicamentos, órdenes de examen y comprobantes
+// de reembolso de la isapre. Las boletas NO aparecen aquí — su información vive en "Vista tabla".
+const TIPO_ORDEN_LABEL = {
+  orden_kinesiologia: "Kine",
+  orden_medicamentos: "Medicamentos",
+  orden_examen: "Examen",
+  comprobante_isapre: "Comprobante isapre",
+};
+function doctorConRutParaTabla(item){
+  const doc = (item.doctor||"").trim();
+  const rut = (item.rutDoctor||"").trim();
+  if(doc && rut) return `${doc} (${rut})`;
+  return doc || rut || "";
+}
+// La descripción de una orden/receta se genera (y normalmente se guarda) con el formato
+// "[Tipo] [fecha] Dr. [apellido] - [detalle]" (ver generarNombreDocumento) — el detalle que interesa
+// para esta columna (N° de sesiones, medicamentos, etc.) es lo que queda después del último " - ".
+// Si el usuario reescribió la descripción a mano y ya no tiene ese separador, se muestra tal cual.
+function detalleOrdenParaTabla(item){
+  const desc = (item.descripcion || "").trim();
+  const idx = desc.lastIndexOf(" - ");
+  return idx >= 0 ? desc.slice(idx + 3).trim() : desc;
+}
+function abrirLightbox(dataUrl){
+  document.getElementById("lightboxImg").src = dataUrl;
+  document.getElementById("lightbox").classList.add("show");
+}
+async function eliminarPrestacion(id){
+  if(!confirm("¿Eliminar esta prestación y sus fotos? Esta acción no se puede deshacer.")) return false;
+  await dbDelete(id);
+  await loadItems();
+  toast("Prestación eliminada");
+  return true;
+}
+function renderOrdenes(){
+  const wrap = document.getElementById("ordenesViewWrap");
+  if(!wrap) return;
   document.getElementById("emptyState").style.display = (items.length===0) ? "block" : "none";
-  grid.style.display = (items.length===0) ? "none" : "flex";
+  const enOrdenes = viewMode === "ordenes";
+  wrap.style.display = enOrdenes ? "" : "none";
+  if(!enOrdenes) return;
 
-  // Vista compacta: una línea por prestación, sin miniaturas de fotos (para ocupar menos espacio).
-  // Las fotos/documentos se ven con el botón "Ver →", que abre el detalle.
-  grid.innerHTML = list.map(item=>{
-    const est = ESTADO_GENERAL[computeEstadoGeneral(item)] || ESTADO_GENERAL.pendiente;
-    const nFotos = (item.fotos||[]).length;
-    const checkbox = selectMode ? `<input type="checkbox" class="sel-check row-check" data-id="${item.id}" ${selectedIds.has(item.id)?"checked":""}>` : "";
+  const list = filteredItems().filter(esDocumentoReferencia);
+  const tbody = document.getElementById("tablaOrdenesBody");
+  if(!tbody) return;
 
-    let recetaTagHtml = "";
-    if(item.tipoDocumento === "orden_medicamentos"){
-      if(item.vigenciaTipo === "permanente"){
-        recetaTagHtml = `<span class="doctype-badge low">Vigencia permanente</span>`;
-      } else {
-        const venc = recetaVencimiento(item);
-        const vig = recetaVigente(item);
-        if(venc) recetaTagHtml = `<span class="doctype-badge ${vig?'low':'danger'}">${vig?('Vigente hasta '+fmtDate(venc)):'Receta vencida'}</span>`;
-      }
-    } else if(item.tipoDocumento === "boleta_medicamentos" && !item.recetaId){
-      recetaTagHtml = `<span class="doctype-badge warn">⚠️ sin receta</span>`;
-    } else if(item.tipoDocumento === "boleta_medica" && esKinesiologia(item.tipoConsulta) && !item.recetaId){
-      recetaTagHtml = `<span class="doctype-badge warn">⚠️ sin orden de kine</span>`;
-    }
+  if(list.length === 0){
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px;">No hay órdenes, recetas o comprobantes que coincidan con los filtros actuales.</td></tr>`;
+    return;
+  }
 
-    const revisar = etapasPorRevisar(item);
-    const revisarTagHtml = revisar.length
-      ? `<span class="doctype-badge warn">⏰ Revisar estado (${revisar.map(e=>e==="seguro"?"Zurich":"Isapre").join(" y ")})</span>`
-      : "";
-
+  tbody.innerHTML = list.map(item=>{
+    const tieneFoto = (item.fotos||[]).length > 0;
     return `
-      <div class="row-item" data-id="${item.id}">
-        ${checkbox}
-        <div class="row-main">
-          <div class="row-top">
-            <span class="row-desc">${escapeHtml(item.descripcion||"(sin descripción)")}</span>
-            <span class="badge ${est.cls}">${est.label}</span>
-          </div>
-          <div class="row-meta">${escapeHtml(item.categoria||"Otro")} · ${fmtDate(item.fecha)}${item.paciente?(" · "+escapeHtml(nombrePaciente(item.paciente))):""} · ${escapeHtml(item.prestador||"Prestador no indicado")}${item.numeroBoleta?(" · N° "+escapeHtml(item.numeroBoleta)):""}</div>
-          <div class="row-tags">
-            ${item.tipoDocumento ? `<span class="doctype-badge">📄 ${escapeHtml(DOC_TYPES[item.tipoDocumento]||item.tipoDocumento)}</span>` : ""}
-            ${(!item.requiereIsapre && !esDocumentoReferencia(item)) ? `<span class="doctype-badge low">→ directo a seguro</span>` : ""}
-            ${recetaTagHtml}
-            ${revisarTagHtml}
-            ${nFotos ? `<span class="doctype-badge low">🖼️ ${nFotos} documento${nFotos>1?"s":""}</span>` : `<span class="doctype-badge low">Sin foto</span>`}
-            ${esCandidatoLimpieza(item) ? `<span class="doctype-badge low">🗑️ liberar espacio</span>` : ""}
-          </div>
-        </div>
-        <div class="row-amount">${fmtCLP(item.monto)}</div>
-        <div class="row-actions"><button class="btn-ghost btn-sm open-detail" data-id="${item.id}">Ver →</button></div>
-      </div>
+      <tr data-id="${item.id}">
+        <td>${escapeHtml(TIPO_ORDEN_LABEL[item.tipoDocumento] || item.tipoDocumento || "")}</td>
+        <td>${escapeHtml(nombrePacienteCorto(item.paciente))}</td>
+        <td>${escapeHtml(doctorConRutParaTabla(item))}</td>
+        <td>${fmtDate(item.fecha)}</td>
+        <td>${escapeHtml(detalleOrdenParaTabla(item))}</td>
+        <td><button type="button" class="btn-ghost btn-sm btn-ver-orden" data-id="${item.id}" ${tieneFoto?"":"disabled"}>Ver</button></td>
+        <td><button type="button" class="btn-ghost btn-sm btn-editar-orden" data-id="${item.id}">Editar</button></td>
+        <td><button type="button" class="btn-ghost btn-sm btn-eliminar-orden" data-id="${item.id}">Eliminar</button></td>
+      </tr>
     `;
   }).join("");
 
-  grid.querySelectorAll(".open-detail").forEach(btn=>{
-    btn.addEventListener("click", (e)=>{ e.stopPropagation(); openDetail(btn.dataset.id); });
-  });
-  grid.querySelectorAll(".sel-check").forEach(cb=>{
-    cb.addEventListener("click", (e)=>{
-      e.stopPropagation();
-      const id = cb.dataset.id;
-      if(cb.checked) selectedIds.add(id); else selectedIds.delete(id);
-      updateExportButton();
+  tbody.querySelectorAll(".btn-ver-orden").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const item = items.find(i=>i.id===btn.dataset.id);
+      const foto = item && item.fotos && item.fotos[0];
+      if(foto) abrirLightbox(foto.dataUrl); else toast("Esta orden no tiene foto adjunta");
     });
   });
-  grid.querySelectorAll(".row-item").forEach(row=>{
-    row.addEventListener("click", (e)=>{
-      if(selectMode && !e.target.classList.contains("open-detail")){
-        const cb = row.querySelector(".sel-check");
-        if(cb && e.target!==cb){ cb.checked = !cb.checked; cb.dispatchEvent(new Event("click",{bubbles:true})); }
-      }
+  tbody.querySelectorAll(".btn-editar-orden").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const item = items.find(i=>i.id===btn.dataset.id);
+      if(item) openForm(item);
     });
+  });
+  tbody.querySelectorAll(".btn-eliminar-orden").forEach(btn=>{
+    btn.addEventListener("click", ()=> eliminarPrestacion(btn.dataset.id));
   });
 }
 
@@ -1836,11 +1851,9 @@ function totalGastadoItem(item){
 }
 function renderTablaBoletas(){
   const wrap = document.getElementById("tableViewWrap");
-  const grid = document.getElementById("grid");
-  if(!wrap || !grid) return;
+  if(!wrap) return;
   const enTabla = viewMode === "tabla";
   wrap.style.display = enTabla ? "" : "none";
-  grid.style.display = enTabla ? "none" : (items.length===0 ? "none" : "flex");
   if(!enTabla) return;
 
   const list = filteredItems().filter(esBoletaParaTabla);
@@ -1849,7 +1862,7 @@ function renderTablaBoletas(){
   if(!tbody) return;
 
   if(list.length === 0){
-    tbody.innerHTML = `<tr><td colspan="16" style="text-align:center;color:var(--muted);padding:20px;">No hay boletas que coincidan con los filtros actuales.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="17" style="text-align:center;color:var(--muted);padding:20px;">No hay boletas que coincidan con los filtros actuales.</td></tr>`;
     if(tfoot) tfoot.innerHTML = "";
     return;
   }
@@ -1867,8 +1880,12 @@ function renderTablaBoletas(){
     totReembolsado += totalReembolsado; totGastado += totalGastado;
     const rutPrestadorDoctor = item.rutPrestador || item.rutDoctor || "";
     const gastadoCls = totalGastado > 0 ? "gastado-pos" : (totalGastado === 0 ? "gastado-cero" : "");
+    // El checkbox de selección solo se muestra en modo "Seleccionar" (para armar la carpeta de
+    // Isapre/Seguro o consultar Zurich en bloque) — igual que antes en la vista de tarjetas.
+    const checkbox = selectMode ? `<input type="checkbox" class="sel-check" data-id="${item.id}" ${selectedIds.has(item.id)?"checked":""}>` : "";
     return `
       <tr data-id="${item.id}" class="open-detail-row">
+        <td class="sel-cell" onclick="event.stopPropagation()">${checkbox}</td>
         <td>${escapeHtml(tipoCortoBoleta(item))}</td>
         <td>${escapeHtml(nombrePacienteCorto(item.paciente))}</td>
         <td>${escapeHtml(rutPrestadorDoctor)}</td>
@@ -1892,7 +1909,7 @@ function renderTablaBoletas(){
   if(tfoot){
     tfoot.innerHTML = `
       <tr>
-        <td colspan="6">Totales (${list.length} boleta${list.length===1?"":"s"})</td>
+        <td colspan="7">Totales (${list.length} boleta${list.length===1?"":"s"})</td>
         <td class="num">${fmtCLP(totMonto)}</td>
         <td class="grp-isapre"></td>
         <td></td>
@@ -1910,16 +1927,34 @@ function renderTablaBoletas(){
   tbody.querySelectorAll(".open-detail").forEach(btn=>{
     btn.addEventListener("click", (e)=>{ e.stopPropagation(); openDetail(btn.dataset.id); });
   });
+  tbody.querySelectorAll(".sel-check").forEach(cb=>{
+    cb.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const id = cb.dataset.id;
+      if(cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+      updateExportButton();
+    });
+  });
   tbody.querySelectorAll(".open-detail-row").forEach(row=>{
-    row.addEventListener("click", ()=> openDetail(row.dataset.id));
+    row.addEventListener("click", (e)=>{
+      if(selectMode){
+        const cb = row.querySelector(".sel-check");
+        if(cb && e.target!==cb){ cb.checked = !cb.checked; cb.dispatchEvent(new Event("click",{bubbles:true})); }
+      } else {
+        openDetail(row.dataset.id);
+      }
+    });
   });
 }
 function toggleVista(){
-  viewMode = viewMode === "tabla" ? "tarjetas" : "tabla";
-  const btn = document.getElementById("btnToggleVista");
-  if(btn) btn.textContent = viewMode === "tabla" ? "🗂️ Vista tarjetas" : "📊 Vista tabla";
-  renderGrid();
+  viewMode = viewMode === "tabla" ? "ordenes" : "tabla";
+  actualizarBotonVista();
+  renderOrdenes();
   renderTablaBoletas();
+}
+function actualizarBotonVista(){
+  const btn = document.getElementById("btnToggleVista");
+  if(btn) btn.textContent = viewMode === "tabla" ? "🗂️ Órdenes" : "📊 Vista tabla";
 }
 
 function esElegibleIsapre(item){
@@ -2058,7 +2093,7 @@ function updateLimpiarButton(){
 function renderAll(){
   renderStats();
   refreshCategoriaFilter();
-  renderGrid();
+  renderOrdenes();
   renderTablaBoletas();
   updateExportButton();
   updateLimpiarButton();
@@ -3052,14 +3087,11 @@ async function init(){
     openForm(item);
   });
   document.getElementById("btnDelete").addEventListener("click", async ()=>{
-    if(!confirm("¿Eliminar esta prestación y sus fotos? Esta acción no se puede deshacer.")) return;
-    await dbDelete(detailId);
-    closeDetail();
-    await loadItems();
-    toast("Prestación eliminada");
+    const ok = await eliminarPrestacion(detailId);
+    if(ok) closeDetail();
   });
 
-  function renderVisible(){ renderGrid(); renderTablaBoletas(); }
+  function renderVisible(){ renderOrdenes(); renderTablaBoletas(); }
   ["filterEstado","filterCategoria","filterTipoDoc","filterPaciente"].forEach(id=>{
     document.getElementById(id).addEventListener("change", renderVisible);
   });
@@ -3070,7 +3102,12 @@ async function init(){
     selectMode = !selectMode;
     selectedIds.clear();
     document.getElementById("btnSelectMode").textContent = selectMode ? "Cancelar selección" : "Seleccionar";
-    renderGrid();
+    // Seleccionar boletas (para "Carpeta para Isapre/Seguro" o "Consultar Zurich") solo tiene sentido
+    // en "Vista tabla" — si se activa desde "Órdenes", cambia automáticamente a esa vista.
+    if(selectMode) viewMode = "tabla";
+    actualizarBotonVista();
+    renderOrdenes();
+    renderTablaBoletas();
     updateExportButton();
   });
   document.getElementById("btnExportZipIsapre").addEventListener("click", exportZipIsapre);
