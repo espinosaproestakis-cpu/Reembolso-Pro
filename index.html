@@ -64,6 +64,10 @@
   table.tabla-app tbody tr.row-incompleta{background:var(--amber-bg);}
   table.tabla-app tbody tr.row-incompleta:hover{background:var(--amber-bg);}
   table.tabla-app .tipo-incompleta{color:var(--amber);font-weight:700;}
+  table.tabla-app td.accion-cell{width:1%;text-align:center;padding-left:5px;padding-right:5px;}
+  .btn-icon{background:transparent;border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:14px;line-height:1;cursor:pointer;}
+  .btn-icon:hover{background:var(--gray-bg);}
+  .btn-icon:disabled{opacity:.35;cursor:default;}
   table.tabla-app td.sel-cell{width:1%;text-align:center;}
   table.tabla-app td.sel-cell input[type=checkbox]{width:16px;height:16px;}
 
@@ -1001,6 +1005,41 @@ function matchPaciente(fullText, pacienteLabelText){
   return matchPacienteByNombre(pacienteLabelText) || matchPacienteByRut(fullText) || matchPacienteByNombre(fullText);
 }
 
+// Doctores/profesionales conocidos — igual que PACIENTES, es una lista chica que tú vas llenando
+// a mano (pídemelo cuando quieras agregar uno) con el nombre corto exacto que quieres ver en la
+// columna "Doctor" de Órdenes, incluyendo el título (Dra./Dr.) cuando corresponda: a veces la boleta
+// no trae el título de forma explícita (ej. "Rosario Andrea Alomar Araya", sin "Dra." en el texto),
+// así que para esos casos conocidos no hay que adivinar el género — solo se busca por RUT.
+const DOCTORES_CONOCIDOS = [
+  { rut:"8719989-4", corto:"Dra. Heather" },
+  { rut:"10691455-9", corto:"Dra. Rosario" },
+  { rut:"7047282-1", corto:"Maria Elisa" }
+];
+function doctorCortoConocido(rutDoctor){
+  if(!rutDoctor) return null;
+  const norm = normalizeRut(rutDoctor);
+  if(!norm) return null;
+  const d = DOCTORES_CONOCIDOS.find(d=>normalizeRut(d.rut)===norm);
+  return d ? d.corto : null;
+}
+// Nombre corto del doctor para mostrar en tablas: si el RUT está en DOCTORES_CONOCIDOS, usa ese
+// nombre curado (con título). Si no, arma uno automático a partir del campo "Doctor" tal como esté
+// escrito: título (Dr./Dra., solo si ya viene en el texto) + la primera palabra del nombre — sin
+// inventar un título que el texto no traiga.
+function nombreDoctorCorto(item){
+  const conocido = doctorCortoConocido(item && item.rutDoctor);
+  if(conocido) return conocido;
+  const doc = ((item && item.doctor) || "").trim();
+  if(!doc) return "";
+  const m = doc.match(/^(dra?\.?)\s+(.+)$/i);
+  if(m){
+    const titulo = /^dra/i.test(m[1]) ? "Dra." : "Dr.";
+    const primeraPalabra = m[2].trim().split(/\s+/)[0] || "";
+    return primeraPalabra ? `${titulo} ${primeraPalabra}` : titulo;
+  }
+  return doc.split(/\s+/)[0] || "";
+}
+
 function setAnalyzingText(msg){
   const el = document.getElementById("analyzingText");
   if(el) el.textContent = msg;
@@ -1404,7 +1443,12 @@ function generarNombreDocumento(tipoDocumento, text, guess){
 
   if(tipoDocumento === "orden_medicamentos"){
     let out = partes(["Receta", fecha, apellido ? ("Dr. "+apellido) : null]);
-    const meds = extractMedicamentosAbrev(text);
+    // Nombre completo de cada medicamento (con su cantidad si se detectó), no abreviado — así la
+    // columna "Detalle" de Órdenes (que lee esta descripción) muestra los medicamentos completos.
+    const medsDetallado = extractMedicamentosDetallado(text);
+    const meds = medsDetallado.length
+      ? medsDetallado.map(m=> m.cantidad ? `${m.nombre} x${m.cantidad}` : m.nombre).join(", ")
+      : extractMedicamentosAbrev(text);
     if(meds) out += (out ? " - " : "") + meds;
     return out || null;
   }
@@ -1757,13 +1801,15 @@ function filteredItems(){
 // de reembolso de la isapre. Las boletas NO aparecen aquí — su información vive en "Vista tabla".
 const TIPO_ORDEN_LABEL = {
   orden_kinesiologia: "Kine",
-  orden_medicamentos: "Medicamentos",
+  orden_medicamentos: "Meds",
   orden_examen: "Examen",
   comprobante_isapre: "Comprobante isapre",
 };
+// Nombre corto del doctor (ver nombreDoctorCorto — usa DOCTORES_CONOCIDOS si el RUT está en la
+// lista) junto a su RUT sin puntos, ej. "Dra. Heather (8719989-4)".
 function doctorConRutParaTabla(item){
-  const doc = (item.doctor||"").trim();
-  const rut = (item.rutDoctor||"").trim();
+  const doc = nombreDoctorCorto(item);
+  const rut = String(item.rutDoctor||"").trim().replace(/\./g,"");
   if(doc && rut) return `${doc} (${rut})`;
   return doc || rut || "";
 }
@@ -1813,9 +1859,9 @@ function renderOrdenes(){
         <td>${escapeHtml(doctorConRutParaTabla(item))}</td>
         <td>${fmtDate(item.fecha)}</td>
         <td>${escapeHtml(detalleOrdenParaTabla(item))}</td>
-        <td><button type="button" class="btn-ghost btn-sm btn-ver-orden" data-id="${item.id}" ${tieneFoto?"":"disabled"}>Ver</button></td>
-        <td><button type="button" class="btn-ghost btn-sm btn-editar-orden" data-id="${item.id}">Editar</button></td>
-        <td><button type="button" class="btn-ghost btn-sm btn-eliminar-orden" data-id="${item.id}">Eliminar</button></td>
+        <td class="accion-cell"><button type="button" class="btn-icon btn-ver-orden" data-id="${item.id}" title="Ver documento adjunto" ${tieneFoto?"":"disabled"}>👁️</button></td>
+        <td class="accion-cell"><button type="button" class="btn-icon btn-editar-orden" data-id="${item.id}" title="Editar">✏️</button></td>
+        <td class="accion-cell"><button type="button" class="btn-icon btn-eliminar-orden" data-id="${item.id}" title="Eliminar">🗑️</button></td>
       </tr>
     `;
   }).join("");
