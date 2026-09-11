@@ -61,6 +61,9 @@
   table.tabla-app tfoot td{font-weight:700;background:var(--gray-bg);border-top:2px solid var(--line);}
   table.tabla-app .gastado-pos{color:var(--red);}
   table.tabla-app .gastado-cero{color:var(--green);}
+  table.tabla-app tbody tr.row-incompleta{background:var(--amber-bg);}
+  table.tabla-app tbody tr.row-incompleta:hover{background:var(--amber-bg);}
+  table.tabla-app .tipo-incompleta{color:var(--amber);font-weight:700;}
   table.tabla-app td.sel-cell{width:1%;text-align:center;}
   table.tabla-app td.sel-cell input[type=checkbox]{width:16px;height:16px;}
 
@@ -69,6 +72,7 @@
   .badge.lista{background:var(--purple-bg);color:var(--purple);}
   .badge.enviada{background:var(--amber-bg);color:var(--amber);}
   .badge.en_revision{background:var(--amber-bg);color:var(--amber);}
+  .badge.incompleta{background:var(--amber-bg);color:var(--amber);}
   .badge.aprobada{background:var(--green-bg);color:var(--green);}
   .badge.rechazada{background:var(--red-bg);color:var(--red);}
   .badge.pagada{background:var(--green-bg);color:var(--green);}
@@ -154,12 +158,14 @@
   <div class="toolbar">
     <select id="filterEstado">
       <option value="">Todos los estados</option>
-      <option value="pendiente">Pendiente de enviar</option>
+      <option value="incompleta">Incompleta (falta orden/receta)</option>
+      <option value="lista_isapre">Lista para isapre</option>
       <option value="en_isapre">En isapre (esperando)</option>
       <option value="rechazada_isapre">Rechazado por isapre</option>
-      <option value="aprobada_isapre_pendiente_seguro">Aprobado isapre — enviar a seguro</option>
-      <option value="en_seguro">En el seguro (esperando)</option>
-      <option value="rechazada_seguro">Rechazado por el seguro</option>
+      <option value="aprobada_isapre_pendiente_seguro">Aprobado isapre — lista para zurich</option>
+      <option value="lista_seguro">Lista para zurich</option>
+      <option value="en_seguro">En zurich (esperando)</option>
+      <option value="rechazada_seguro">Rechazado por zurich</option>
       <option value="finalizado">Finalizado (reembolsado)</option>
     </select>
     <select id="filterCategoria">
@@ -548,12 +554,14 @@ const ETAPA_ESTADOS = [
   ["rechazada","Rechazada"]
 ];
 const ESTADO_GENERAL = {
-  pendiente:{label:"Pendiente de enviar", cls:"pendiente"},
+  incompleta:{label:"Incompleta (falta orden/receta vinculada)", cls:"incompleta"},
+  lista_isapre:{label:"Lista para isapre", cls:"pendiente"},
   en_isapre:{label:"En isapre (esperando)", cls:"enviada"},
   rechazada_isapre:{label:"Rechazado por isapre", cls:"rechazada"},
-  aprobada_isapre_pendiente_seguro:{label:"Aprobado isapre — enviar a seguro", cls:"lista"},
-  en_seguro:{label:"En el seguro (esperando)", cls:"en_revision"},
-  rechazada_seguro:{label:"Rechazado por el seguro", cls:"rechazada"},
+  aprobada_isapre_pendiente_seguro:{label:"Aprobado isapre — lista para zurich", cls:"lista"},
+  lista_seguro:{label:"Lista para zurich", cls:"lista"},
+  en_seguro:{label:"En zurich (esperando)", cls:"en_revision"},
+  rechazada_seguro:{label:"Rechazado por zurich", cls:"rechazada"},
   finalizado:{label:"Finalizado (reembolsado)", cls:"pagada"},
   referencia:{label:"Documento de respaldo", cls:"pendiente"}
 };
@@ -583,12 +591,22 @@ function etapasPorRevisar(item){
 function esDocumentoReferencia(item){
   return item.tipoDocumento === "comprobante_isapre" || /^orden_/.test(item.tipoDocumento || "");
 }
+// Una boleta está "incompleta" cuando su categoría/subcategoría exige una orden médica o receta de
+// respaldo (kinesiología → orden de kinesiología; medicamentos → receta) y todavía no se vinculó
+// ninguna (item.recetaId vacío) — ver tipoDocReferenciaParaForm más abajo. Mientras esté incompleta,
+// no puede pasar a "lista para isapre"/"lista para zurich": hay que vincular el documento primero.
+function boletaIncompleta(item){
+  if(esDocumentoReferencia(item)) return false;
+  const tipoRef = tipoDocReferenciaParaForm(item.categoria, item.tipoConsulta);
+  return !!tipoRef && !item.recetaId;
+}
 function computeEstadoGeneral(item){
   if(esDocumentoReferencia(item)) return "referencia";
+  if(boletaIncompleta(item)) return "incompleta";
   const isa = item.isapre || nuevaEtapa();
   const seg = item.seguro || nuevaEtapa({fechaPago:""});
   if(item.requiereIsapre){
-    if(isa.estado === "no_enviada") return "pendiente";
+    if(isa.estado === "no_enviada") return "lista_isapre";
     if(isa.estado === "enviada") return "en_isapre";
     if(isa.estado === "rechazada") return "rechazada_isapre";
     // aprobada
@@ -597,7 +615,7 @@ function computeEstadoGeneral(item){
     if(seg.estado === "rechazada") return "rechazada_seguro";
     return "finalizado";
   } else {
-    if(seg.estado === "no_enviada") return "pendiente";
+    if(seg.estado === "no_enviada") return "lista_seguro";
     if(seg.estado === "enviada") return "en_seguro";
     if(seg.estado === "rechazada") return "rechazada_seguro";
     return "finalizado";
@@ -666,6 +684,9 @@ function etapaBoxHtml(prefix, etapa, opts){
   const estado = (etapa && etapa.estado) || "no_enviada";
   const necesitaRevision = etapaNecesitaRevision(etapa);
   const ultimaActualizacion = (etapa && etapa.fechaUltimaActualizacion) || "";
+  // Una vez que se marca como enviada (o más allá), la fecha de envío y el N° de caso son claves
+  // para el seguimiento — si faltan, se avisa (sin bloquear el guardado, por si aún no los tienes).
+  const faltanDatosEnvio = estado !== "no_enviada" && (!(etapa&&etapa.fechaEnvio) || !(etapa&&etapa.numeroReembolso));
   return `
     <div class="field">
       <label>Estado</label>
@@ -683,6 +704,7 @@ function etapaBoxHtml(prefix, etapa, opts){
         <input type="date" id="d${prefix}FechaEnvio" value="${(etapa&&etapa.fechaEnvio)||""}">
       </div>
     </div>
+    ${faltanDatosEnvio ? `<div class="banner" style="background:var(--amber-bg);color:var(--amber);border-color:#f5dcae;margin-bottom:8px;">⚠️ Falta la fecha de envío y/o el N° de caso — son importantes para hacer seguimiento y para "Consultar estado ahora".</div>` : ""}
     <div class="row2">
       <div class="field">
         <label>Fecha de resolución</label>
@@ -1672,10 +1694,11 @@ async function processNextInQueue(){
 function computeStats(){
   const trackable = items.filter(i=>!esDocumentoReferencia(i));
   const total = trackable.length;
-  let pendiente=0, enIsapre=0, aprobadaIsapreEsperaSeguro=0, enSeguro=0, rechazados=0, finalizados=0, totalReembolsado=0, porRevisar=0;
+  let incompletas=0, listas=0, enIsapre=0, aprobadaIsapreEsperaSeguro=0, enSeguro=0, rechazados=0, finalizados=0, totalReembolsado=0, porRevisar=0;
   for(const item of trackable){
     const eg = computeEstadoGeneral(item);
-    if(eg==="pendiente") pendiente++;
+    if(eg==="incompleta") incompletas++;
+    else if(eg==="lista_isapre" || eg==="lista_seguro") listas++;
     else if(eg==="en_isapre") enIsapre++;
     else if(eg==="aprobada_isapre_pendiente_seguro") aprobadaIsapreEsperaSeguro++;
     else if(eg==="en_seguro") enSeguro++;
@@ -1683,17 +1706,18 @@ function computeStats(){
     else if(eg==="finalizado"){ finalizados++; totalReembolsado += Number((item.seguro&&item.seguro.montoAprobado)||0); }
     if(etapasPorRevisar(item).length) porRevisar++;
   }
-  return {total, pendiente, enIsapre, aprobadaIsapreEsperaSeguro, enSeguro, rechazados, finalizados, totalReembolsado, porRevisar};
+  return {total, incompletas, listas, enIsapre, aprobadaIsapreEsperaSeguro, enSeguro, rechazados, finalizados, totalReembolsado, porRevisar};
 }
 
 function renderStats(){
   const s = computeStats();
   document.getElementById("stats").innerHTML = `
     <div class="stat"><div class="n">${s.total}</div><div class="l">Prestaciones registradas</div></div>
-    <div class="stat"><div class="n">${s.pendiente}</div><div class="l">Pendientes de enviar</div></div>
+    <div class="stat" style="${s.incompletas?'':'opacity:.5;'}"><div class="n">${s.incompletas}</div><div class="l">⚠️ Incompletas (falta vincular orden/receta)</div></div>
+    <div class="stat"><div class="n">${s.listas}</div><div class="l">Listas para enviar</div></div>
     <div class="stat"><div class="n">${s.enIsapre}</div><div class="l">En isapre (esperando)</div></div>
-    <div class="stat"><div class="n">${s.aprobadaIsapreEsperaSeguro}</div><div class="l">Aprobado isapre → enviar a seguro</div></div>
-    <div class="stat"><div class="n">${s.enSeguro}</div><div class="l">En el seguro (esperando)</div></div>
+    <div class="stat"><div class="n">${s.aprobadaIsapreEsperaSeguro}</div><div class="l">Aprobado isapre → lista para zurich</div></div>
+    <div class="stat"><div class="n">${s.enSeguro}</div><div class="l">En zurich (esperando)</div></div>
     <div class="stat"><div class="n">${s.rechazados}</div><div class="l">Rechazados</div></div>
     <div class="stat"><div class="n">${s.finalizados}</div><div class="l">Finalizados</div></div>
     <div class="stat"><div class="n">${fmtCLP(s.totalReembolsado)}</div><div class="l">Total reembolsado</div></div>
@@ -1883,10 +1907,15 @@ function renderTablaBoletas(){
     // El checkbox de selección solo se muestra en modo "Seleccionar" (para armar la carpeta de
     // Isapre/Seguro o consultar Zurich en bloque) — igual que antes en la vista de tarjetas.
     const checkbox = selectMode ? `<input type="checkbox" class="sel-check" data-id="${item.id}" ${selectedIds.has(item.id)?"checked":""}>` : "";
+    // Una boleta de kine/medicamentos sin la orden/receta vinculada aún no puede avanzar a isapre/zurich
+    // — se resalta la fila para que salte a la vista, en vez de quedar invisible entre las demás.
+    const incompleta = boletaIncompleta(item);
+    const rowCls = incompleta ? " row-incompleta" : "";
+    const tipoTxt = incompleta ? `⚠️ ${escapeHtml(tipoCortoBoleta(item))}` : escapeHtml(tipoCortoBoleta(item));
     return `
-      <tr data-id="${item.id}" class="open-detail-row">
+      <tr data-id="${item.id}" class="open-detail-row${rowCls}" ${incompleta?'title="Incompleta: falta vincular la orden/receta que la respalda"':""}>
         <td class="sel-cell" onclick="event.stopPropagation()">${checkbox}</td>
-        <td>${escapeHtml(tipoCortoBoleta(item))}</td>
+        <td class="${incompleta?"tipo-incompleta":""}">${tipoTxt}</td>
         <td>${escapeHtml(nombrePacienteCorto(item.paciente))}</td>
         <td>${escapeHtml(rutPrestadorDoctor)}</td>
         <td>${escapeHtml(item.numeroBoleta||"")}</td>
@@ -1958,10 +1987,10 @@ function actualizarBotonVista(){
 }
 
 function esElegibleIsapre(item){
-  return !esDocumentoReferencia(item) && item.requiereIsapre && (item.isapre||nuevaEtapa()).estado === "no_enviada";
+  return !esDocumentoReferencia(item) && !boletaIncompleta(item) && item.requiereIsapre && (item.isapre||nuevaEtapa()).estado === "no_enviada";
 }
 function esElegibleSeguro(item){
-  if(esDocumentoReferencia(item)) return false;
+  if(esDocumentoReferencia(item) || boletaIncompleta(item)) return false;
   const seg = (item.seguro||nuevaEtapa()).estado;
   if(seg !== "no_enviada") return false;
   if(item.requiereIsapre) return (item.isapre||nuevaEtapa()).estado === "aprobada";
@@ -2267,7 +2296,7 @@ function openDetail(id){
   const item = items.find(i=>i.id===id);
   if(!item) return;
   const eg = computeEstadoGeneral(item);
-  const est = ESTADO_GENERAL[eg] || ESTADO_GENERAL.pendiente;
+  const est = ESTADO_GENERAL[eg] || {label:"", cls:"pendiente"};
   document.getElementById("detailTitle").textContent = item.descripcion || "Detalle de prestación";
   const fotos = item.fotos || [];
   const fotosHtml = fotos.length ? fotos.map((f,fi)=>`
@@ -2283,6 +2312,10 @@ function openDetail(id){
   const isapre = item.isapre || nuevaEtapa();
   const seguro = item.seguro || nuevaEtapa({fechaPago:""});
   const seguroAtenuado = (item.requiereIsapre && isapre.estado !== "aprobada");
+  const incompleta = !esReferencia && boletaIncompleta(item);
+  // Monto que corresponde solicitar a Zurich: la diferencia entre el total de la boleta y lo que
+  // ya reembolsó la isapre (si aplica) — mismo cálculo que usa la "chuleta" de datos para el portal.
+  const montoASolicitarZurich = Math.max(0, Number(item.monto||0) - (item.requiereIsapre ? Number(isapre.montoAprobado||0) : 0));
 
   let recetaInfoHtml = "";
   if(item.tipoDocumento === "orden_medicamentos"){
@@ -2323,6 +2356,14 @@ function openDetail(id){
     </div>
   ` : "";
 
+  // Mientras falte vincular la orden/receta de respaldo, la prestación no puede avanzar a "lista
+  // para isapre"/"lista para zurich" — este aviso explica por qué y manda a "Editar datos" a vincularla.
+  const incompletaHtml = incompleta ? `
+    <div class="banner" style="background:var(--amber-bg);color:var(--amber);border-color:#f5dcae;">
+      📎 Esta prestación está <b>incompleta</b>: le falta vincular ${tipoDocReferenciaParaForm(item.categoria, item.tipoConsulta)==="orden_medicamentos" ? "la receta médica" : "la orden médica de kinesiología"} que la respalda antes de poder enviarla a ${item.requiereIsapre ? "isapre" : "zurich"}. Usa <b>"Editar datos"</b> más abajo para vincularla.
+    </div>
+  ` : "";
+
   const pipelineHtml = esReferencia ? `
     <div class="banner">📎 Este documento es un comprobante de reembolso de la isapre. Ábrelo desde la <b>prestación original</b> relacionada (Editar → marca la etapa Isapre como "Aprobada" y adjunta este archivo ahí) en vez de darle seguimiento aquí como una prestación aparte.</div>
   ` : `
@@ -2331,14 +2372,18 @@ function openDetail(id){
       <label style="margin:0;font-weight:500;color:var(--ink);">Pasar directo a seguro (sin pasar por isapre)</label>
     </div>
 
-    <div id="isapreBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${item.requiereIsapre?"":"opacity:.4;"}">
+    <div id="isapreBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${(item.requiereIsapre && !incompleta)?"":"opacity:.4;"}">
       <div style="font-weight:700;font-size:13px;margin-bottom:8px;">1️⃣ Isapre</div>
       ${etapaBoxHtml("Isapre", isapre, {numLabel:"folio / reembolso isapre"})}
+      ${(item.requiereIsapre && isapre.estado==="aprobada" && isapre.montoAprobado==null) ? `
+        <div class="banner" style="background:var(--amber-bg);color:var(--amber);border-color:#f5dcae;margin-top:8px;">⚠️ La isapre está marcada como <b>aprobada</b> pero todavía no registras el monto reembolsado — revisa el comprobante que te dieron (o que subiste como "Comprobante isapre") y complétalo arriba en "Monto aprobado". El seguro reembolsa la <b>diferencia</b> entre el total de la boleta y ese monto.</div>
+      ` : ""}
       ${isapre.estado==="no_enviada" ? chuletaBoxHtml(item, "isapre") : ""}
     </div>
 
-    <div id="seguroBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${seguroAtenuado?"opacity:.55;":""}">
+    <div id="seguroBox" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0;${(seguroAtenuado || incompleta)?"opacity:.55;":""}">
       <div style="font-weight:700;font-size:13px;margin-bottom:8px;">2️⃣ Seguro complementario (Zurich)</div>
+      ${(item.requiereIsapre && seguro.estado==="no_enviada") ? `<div class="meta" style="margin-bottom:8px;">💡 Monto a solicitar a Zurich (diferencia con lo reembolsado por la isapre): <b>${fmtCLP(montoASolicitarZurich)}</b></div>` : ""}
       ${etapaBoxHtml("Seguro", seguro, {numLabel:"siniestro / reembolso seguro", fechaPago:true, consultarUrl:ZURICH_PORTAL_URL})}
       ${seguro.estado==="no_enviada" ? chuletaBoxHtml(item, "seguro") : ""}
     </div>
@@ -2354,6 +2399,7 @@ function openDetail(id){
     <div style="margin:12px 0;"><span class="badge ${est.cls}">${est.label}</span></div>
 
     ${limpiezaHtml}
+    ${incompletaHtml}
     ${pipelineHtml}
 
     <div class="field">
