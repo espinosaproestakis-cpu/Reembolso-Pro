@@ -66,6 +66,7 @@
   table.tabla-boletas th, table.tabla-boletas td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;}
   table.tabla-boletas th{background:var(--gray-bg);color:var(--muted);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.02em;}
   table.tabla-boletas th.grp-isapre, table.tabla-boletas th.grp-seguro, table.tabla-boletas th.grp-total{border-left:2px solid var(--line);}
+  table.tabla-boletas th.grp-header{text-align:center;font-size:11px;}
   table.tabla-boletas td.grp-isapre, table.tabla-boletas td.grp-seguro, table.tabla-boletas td.grp-total{border-left:2px solid var(--line);}
   table.tabla-boletas td.num, table.tabla-boletas th.num{text-align:right;font-variant-numeric:tabular-nums;}
   table.tabla-boletas tbody tr{cursor:pointer;}
@@ -206,23 +207,26 @@
     <table class="tabla-boletas" id="tablaBoletas">
       <thead>
         <tr>
-          <th>Categoría</th>
-          <th>Subcategoría</th>
-          <th>Detalle</th>
-          <th>RUT prestador/doctor</th>
-          <th>N° de boleta</th>
-          <th class="num">Cant. sesiones</th>
-          <th>Fecha</th>
-          <th class="num">Monto total</th>
-          <th class="grp-isapre">Fecha envío isapre</th>
-          <th>N° caso isapre</th>
-          <th class="num">Monto reemb. isapre</th>
-          <th class="grp-seguro">Fecha envío Zurich</th>
-          <th>N° caso Zurich</th>
-          <th class="num">Monto reemb. Zurich</th>
-          <th class="num grp-total">Total reembolsado</th>
-          <th class="num">Total gastado</th>
-          <th></th>
+          <th rowspan="2">Tipo</th>
+          <th rowspan="2">Paciente</th>
+          <th rowspan="2">RUT prestador/doctor</th>
+          <th rowspan="2">N° de boleta</th>
+          <th rowspan="2" class="num">Cant. sesiones</th>
+          <th rowspan="2">Fecha</th>
+          <th rowspan="2" class="num">Monto total</th>
+          <th colspan="3" class="grp-isapre grp-header">ISAPRE</th>
+          <th colspan="3" class="grp-seguro grp-header">ZURICH</th>
+          <th rowspan="2" class="num grp-total">Total reembolsado</th>
+          <th rowspan="2" class="num">Total gastado</th>
+          <th rowspan="2"></th>
+        </tr>
+        <tr>
+          <th class="grp-isapre">Fecha envío</th>
+          <th>Solicitud</th>
+          <th class="num">$ reemb.</th>
+          <th class="grp-seguro">Fecha envío</th>
+          <th>Solicitud</th>
+          <th class="num">$ reemb.</th>
         </tr>
       </thead>
       <tbody id="tablaBoletasBody"></tbody>
@@ -1800,6 +1804,26 @@ function renderGrid(){
 function esBoletaParaTabla(item){
   return /^boleta_/.test(item.tipoDocumento || "");
 }
+// Columna "Paciente" de la vista tabla: primer nombre nada más (Irene / Laura / Jose), no el nombre completo.
+function nombrePacienteCorto(id){
+  const nombre = nombrePaciente(id);
+  return nombre ? nombre.split(/\s+/)[0] : "";
+}
+// Columna "Tipo" de la vista tabla: la subcategoría (especialidad de la consulta), abreviada cuando
+// hay una forma corta conocida (ej. "Kinesiología" -> "Kine"). Si la especialidad no está en el mapa,
+// se deja tal cual venía — y si la boleta no tiene subcategoría (Remedios/Exámenes), queda vacía.
+const TIPO_CORTO_BOLETA = {
+  "kinesiologia": "Kine",
+  "psicologia": "Psico",
+  "psiquiatria": "Psiquiatría",
+  "traumatologia": "Traumato",
+  "medicina general": "Med. general",
+};
+function tipoCortoBoleta(item){
+  const sub = (item.tipoConsulta || "").trim();
+  if(!sub) return "";
+  return TIPO_CORTO_BOLETA[normalizeText(sub)] || sub;
+}
 // Total reembolsado = monto aprobado por isapre + monto aprobado por el seguro (Zurich).
 function totalReembolsadoItem(item){
   const montoIsapre = Number(item.isapre && item.isapre.montoAprobado) || 0;
@@ -1825,7 +1849,7 @@ function renderTablaBoletas(){
   if(!tbody) return;
 
   if(list.length === 0){
-    tbody.innerHTML = `<tr><td colspan="17" style="text-align:center;color:var(--muted);padding:20px;">No hay boletas que coincidan con los filtros actuales.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="16" style="text-align:center;color:var(--muted);padding:20px;">No hay boletas que coincidan con los filtros actuales.</td></tr>`;
     if(tfoot) tfoot.innerHTML = "";
     return;
   }
@@ -1845,9 +1869,8 @@ function renderTablaBoletas(){
     const gastadoCls = totalGastado > 0 ? "gastado-pos" : (totalGastado === 0 ? "gastado-cero" : "");
     return `
       <tr data-id="${item.id}" class="open-detail-row">
-        <td>${escapeHtml(item.categoria||"")}</td>
-        <td>${escapeHtml(item.tipoConsulta||"")}</td>
-        <td>${escapeHtml(item.descripcion||"")}</td>
+        <td>${escapeHtml(tipoCortoBoleta(item))}</td>
+        <td>${escapeHtml(nombrePacienteCorto(item.paciente))}</td>
         <td>${escapeHtml(rutPrestadorDoctor)}</td>
         <td>${escapeHtml(item.numeroBoleta||"")}</td>
         <td class="num">${item.cantidadSesiones!=null ? item.cantidadSesiones : ""}</td>
@@ -1869,7 +1892,7 @@ function renderTablaBoletas(){
   if(tfoot){
     tfoot.innerHTML = `
       <tr>
-        <td colspan="7">Totales (${list.length} boleta${list.length===1?"":"s"})</td>
+        <td colspan="6">Totales (${list.length} boleta${list.length===1?"":"s"})</td>
         <td class="num">${fmtCLP(totMonto)}</td>
         <td class="grp-isapre"></td>
         <td></td>
@@ -3085,4 +3108,3 @@ init();
 </script>
 </body>
 </html>
-
