@@ -137,7 +137,7 @@
     <button class="btn-secondary btn-sm" id="btnRestore">⬆️ Restaurar</button>
     <input type="file" id="restoreInput" accept="application/json" style="display:none;">
     <button class="btn-secondary btn-sm" id="btnDriveSettings">☁️ Google Drive</button>
-    <button class="btn-secondary" id="btnAutoUpload">📄 Subir documento (auto)</button>
+    <button class="btn-secondary" id="btnAutoUpload">📄 Subir documento</button>
     <input type="file" id="autoUploadInput" accept="image/*,application/pdf" multiple capture="environment" style="display:none;">
     <button class="btn-primary" id="btnNew">+ Nueva prestación</button>
   </div>
@@ -228,7 +228,7 @@
         <datalist id="subcategoriaList"></datalist>
       </div>
       <div class="field" id="tipoRegistroField" style="display:none;">
-        <label>¿Qué estás subiendo?</label>
+        <label>Documento</label>
         <select id="fTipoRegistro">
           <option value="boleta">Boleta / recibo de pago (con monto)</option>
           <option value="orden">Orden médica / receta (sin monto — solo de referencia)</option>
@@ -251,22 +251,47 @@
         </select>
         <div id="recetaHint" style="font-size:11.5px;color:var(--amber);margin-top:4px;display:none;"></div>
       </div>
+      <div class="row2" id="vigenciaField" style="display:none;">
+        <div class="field">
+          <label>Vigencia de la receta</label>
+          <select id="fVigenciaTipo">
+            <option value="">Por defecto (6 meses desde la emisión)</option>
+            <option value="permanente">Permanente / indefinida (sin vencimiento)</option>
+            <option value="meses">Cantidad de meses personalizada</option>
+            <option value="dias">Cantidad de días personalizada</option>
+          </select>
+        </div>
+        <div class="field" id="vigenciaValorField" style="display:none;">
+          <label id="vigenciaValorLabel">Meses</label>
+          <input type="number" id="fVigenciaValor" min="1" step="1" placeholder="Ej: 1">
+        </div>
+      </div>
       <div class="row2">
         <div class="field">
           <label>Prestador / clínica / médico</label>
           <input type="text" id="fPrestador" placeholder="Ej: Clínica Las Condes">
         </div>
+        <div class="field" id="rutPrestadorField" style="display:none;">
+          <label>RUT del prestador</label>
+          <input type="text" id="fRutPrestador" placeholder="Ej: 76.246.306-7">
+        </div>
+      </div>
+      <div class="row2">
         <div class="field" id="numBoletaField">
           <label>N° de boleta / folio</label>
           <input type="text" id="fBoleta" placeholder="Ej: 0001234">
         </div>
+        <div class="field" id="cantidadSesionesField" style="display:none;">
+          <label>Cantidad de sesiones</label>
+          <input type="number" id="fCantidadSesiones" min="1" step="1" placeholder="Ej: 2">
+        </div>
       </div>
-      <div class="row2">
-        <div class="field">
+      <div class="row2" id="doctorRowField">
+        <div class="field" id="doctorField">
           <label>Doctor / profesional</label>
           <input type="text" id="fDoctor" placeholder="Ej: Heather Strain">
         </div>
-        <div class="field">
+        <div class="field" id="rutDoctorField">
           <label>RUT del doctor</label>
           <input type="text" id="fRutDoctor" placeholder="Ej: 8.719.989-4">
         </div>
@@ -340,6 +365,9 @@
       La app pide permiso únicamente sobre <b>los archivos que ella misma crea</b> — no puede ver ni tocar el resto de tu Drive.
       El acceso queda solo en memoria: si cierras la pestaña, tendrás que conectar de nuevo la próxima vez.
     </p>
+    <p style="font-size:12.5px;color:var(--muted);line-height:1.55;">
+      Mientras estés conectado, también organiza sola tus documentos en una carpeta <b>"REEMBOLSOS WEB"</b>: todas las recetas y órdenes de kinesiología van juntas en "ordenes kine y recetas", y cada boleta recibe su propia carpeta (con su N° de boleta) que incluye una copia de la orden que la respalda.
+    </p>
     <div class="field">
       <label>Google OAuth Client ID</label>
       <input type="text" id="driveClientId" placeholder="xxxxxxxx.apps.googleusercontent.com">
@@ -363,6 +391,23 @@
     </div>
     <div class="actions" style="margin-top:2px;">
       <button type="button" class="btn-ghost" id="btnDriveClose" style="margin-left:auto;">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Overlay: elegir qué tipo de documento se va a subir -->
+<div class="overlay" id="tipoDocOverlay">
+  <div class="modal" style="max-width:420px;">
+    <h2>📄 ¿Qué estás subiendo?</h2>
+    <p style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-top:0;">Elige el tipo de documento para que la app sepa exactamente qué datos buscar.</p>
+    <div style="display:flex;flex-direction:column;gap:8px;margin:14px 0;">
+      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="receta" style="text-align:left;">💊 Receta médica<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">Medicamentos, dosis y vigencia</span></button>
+      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="orden_kine" style="text-align:left;">🦵 Orden de kinesiología<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">Doctor, paciente y N° de sesiones</span></button>
+      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="boleta" style="text-align:left;">🧾 Boleta<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">De doctor, sesión de kine o medicamentos — con monto pagado</span></button>
+      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="auto" style="text-align:left;">🔍 Otro / no estoy seguro<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">Detección automática (comprobante isapre, etc.)</span></button>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn-ghost" id="btnTipoDocCancelar">Cancelar</button>
     </div>
   </div>
 </div>
@@ -528,6 +573,11 @@ function migrateItem(item){
   if(item.rutDoctor === undefined || item.rutDoctor === null) item.rutDoctor = "";
   if(item.tipoConsulta === undefined || item.tipoConsulta === null) item.tipoConsulta = "";
   if(item.recetaId === undefined || item.recetaId === null) item.recetaId = "";
+  if(item.vigenciaTipo === undefined || item.vigenciaTipo === null) item.vigenciaTipo = "";
+  if(item.vigenciaValor === undefined) item.vigenciaValor = null;
+  if(item.driveOrdenCopiada === undefined) item.driveOrdenCopiada = "";
+  if(item.rutPrestador === undefined || item.rutPrestador === null) item.rutPrestador = "";
+  if(item.cantidadSesiones === undefined) item.cantidadSesiones = null;
   if(!item.isapre) item.isapre = nuevaEtapa();
   if(!item.seguro) item.seguro = nuevaEtapa({fechaPago:""});
   // Rellena los campos nuevos (fecha estimada de respuesta / última actualización) en etapas
@@ -683,7 +733,10 @@ const uid = ()=> (crypto.randomUUID ? crypto.randomUUID() : "id-"+Date.now()+"-"
 const todayISO = ()=> new Date().toISOString().slice(0,10);
 
 /* ---------------- vigencia de recetas (medicamentos) ---------------- */
-// Las recetas médicas de medicamentos son válidas por 6 meses desde su emisión en Chile.
+// Por defecto, las recetas médicas de medicamentos son válidas por 6 meses desde su emisión en
+// Chile — pero si la propia receta indica otra vigencia ("por 1 mes", "permanente", etc., ver
+// extractVigenciaTexto), esa vigencia manda por sobre el valor por defecto (item.vigenciaTipo/
+// vigenciaValor, editable también a mano en el formulario).
 const RECETA_VIGENCIA_MESES = 6;
 function addMonthsISO(iso, months){
   if(!iso) return null;
@@ -694,12 +747,27 @@ function addMonthsISO(iso, months){
   dt.setMonth(dt.getMonth()+months);
   return `${dt.getFullYear()}-${pad2(dt.getMonth()+1)}-${pad2(dt.getDate())}`;
 }
+function addDaysISO(iso, days){
+  if(!iso) return null;
+  const parts = String(iso).split("-").map(Number);
+  if(parts.length!==3 || parts.some(isNaN)) return null;
+  const [y,m,d] = parts;
+  const dt = new Date(y, m-1, d);
+  dt.setDate(dt.getDate()+days);
+  return `${dt.getFullYear()}-${pad2(dt.getMonth()+1)}-${pad2(dt.getDate())}`;
+}
 // Fecha de vencimiento de una orden médica de medicamentos (item.tipoDocumento==="orden_medicamentos").
+// null = sin vencimiento (vigencia "permanente").
 function recetaVencimiento(item){
-  return addMonthsISO(item && item.fecha, RECETA_VIGENCIA_MESES);
+  if(!item) return null;
+  if(item.vigenciaTipo === "permanente") return null;
+  if(item.vigenciaTipo === "meses" && item.vigenciaValor) return addMonthsISO(item.fecha, item.vigenciaValor);
+  if(item.vigenciaTipo === "dias" && item.vigenciaValor) return addDaysISO(item.fecha, item.vigenciaValor);
+  return addMonthsISO(item.fecha, RECETA_VIGENCIA_MESES);
 }
 // true = vigente, false = vencida, null = no se pudo determinar (sin fecha registrada).
 function recetaVigente(item){
+  if(item && item.vigenciaTipo === "permanente") return true;
   const v = recetaVencimiento(item);
   if(!v) return null;
   return v >= todayISO();
@@ -1197,6 +1265,39 @@ function extractNumSesiones(text){
   const m = text.match(/(\d+)\s*sesi[oó]n/i);
   return m ? m[1] : null;
 }
+// Igual que extractMedicamentosAbrev, pero devuelve una lista de objetos {nombre, cantidad} en vez
+// de solo abreviaciones — busca, línea por línea, un medicamento con su dosis (mg/mcg/ml) y, si
+// aparece cerca, la cantidad a dispensar (ej. "x 20 comprimidos", "30 unidades", "Cantidad: 2").
+function extractMedicamentosDetallado(text){
+  const meds = [];
+  const doseRe = /([A-Za-zÁÉÍÓÚÑáéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ()\- ]{1,30}?\s\d+[.,]?\d*\s*(?:mg|mcg|ml))\b/i;
+  const cantRe = /(\d+)\s*(?:comprimidos?|c[aá]psulas?|tabletas?|ampollas?|frascos?|unidades?|sobres?|gotas?)|(?:x|cantidad\s*:?)\s*(\d+)\b/i;
+  const vistos = new Set();
+  for(const line of text.split(/\n/)){
+    const dm = line.match(doseRe);
+    if(!dm) continue;
+    const nombre = dm[1].replace(/\s{2,}/g," ").trim();
+    if(vistos.has(nombre.toLowerCase())) continue;
+    vistos.add(nombre.toLowerCase());
+    const cm = line.match(cantRe);
+    const cantidad = cm ? (cm[1]||cm[2]||null) : null;
+    meds.push({ nombre, cantidad });
+  }
+  return meds;
+}
+// Busca en el texto de una receta si el médico indicó explícitamente por cuánto tiempo es válida
+// (ej. "por 1 mes", "por 30 días", "tratamiento permanente") — si la encuentra, esta vigencia
+// reemplaza el cálculo por defecto de 6 meses fijos; si no dice nada, no devuelve nada (se usa el
+// valor por defecto). Devuelve {tipo:"permanente"|"meses"|"dias", valor:number|null} o null.
+function extractVigenciaTexto(text){
+  const norm = normalizeText(text);
+  if(/permanente|indefinid[oa]|uso continuo|tratamiento continuo|de por vida/.test(norm)) return {tipo:"permanente", valor:null};
+  let m = norm.match(/por\s+(\d+)\s*mes(?:es)?/) || norm.match(/(\d+)\s*mes(?:es)?\s*de\s*(?:tratamiento|vigencia|duracion)/);
+  if(m) return {tipo:"meses", valor:parseInt(m[1],10)};
+  m = norm.match(/por\s+(\d+)\s*d[ií]as?/);
+  if(m) return {tipo:"dias", valor:parseInt(m[1],10)};
+  return null;
+}
 function extractIsapre(text){
   const norm = normalizeText(text);
   for(const key of ISAPRES_CONOCIDAS){
@@ -1314,9 +1415,156 @@ function classifyAndExtract(text){
   };
 }
 
+/* ---------------- extracción "tipada" (cuando el usuario ya indicó qué tipo de documento es) ---------------- */
+// A diferencia de classifyAndExtract (que adivina el tipo entre muchas posibilidades), estas tres
+// funciones se usan cuando el usuario ya eligió el tipo en el selector "¿Qué estás subiendo?" —
+// así no hay que adivinar nada, solo extraer los campos específicos de ese tipo.
+
+// RECETAS MÉDICAS: fecha, doctor, paciente, medicamentos (nombre y cantidad), vigencia.
+function extractOrdenMedicamentosData(text){
+  const fecha = extractFecha(text);
+  const prestador = extractPrestador(text);
+  const doctor = extractNombreDoctor(text);
+  const rutDoctor = extractRutDoctor(text);
+  const pacienteTexto = extractPaciente(text);
+  const pacienteMatch = matchPaciente(text, pacienteTexto);
+  const medicamentos = extractMedicamentosDetallado(text);
+  const vigencia = extractVigenciaTexto(text);
+  const detalle = medicamentos.length
+    ? medicamentos.map(m=> m.cantidad ? `${m.nombre} x${m.cantidad}` : m.nombre).join(", ")
+    : (extractMedicamentosAbrev(text) || null);
+  const nombreArchivo = generarNombreDocumento("orden_medicamentos", text, {fecha, prestador});
+  return {
+    tipoDocumento: "orden_medicamentos",
+    tipoDocumentoLabel: DOC_TYPES.orden_medicamentos,
+    confianza: 1,
+    fecha, monto: null,
+    paciente: pacienteTexto,
+    pacienteId: pacienteMatch ? pacienteMatch.id : "",
+    pacienteNombre: pacienteMatch ? pacienteMatch.nombre : null,
+    prestador, numeroBoleta: null, detalle, doctor, rutDoctor, tipoConsulta: null,
+    medicamentos, vigencia,
+    nombreArchivo
+  };
+}
+
+// ÓRDENES DE KINESIOLOGÍA: fecha, doctor, paciente, cantidad de sesiones.
+function extractOrdenKineDataTyped(text){
+  const fecha = extractFecha(text);
+  const prestador = extractPrestador(text);
+  const doctor = extractNombreDoctor(text);
+  const rutDoctor = extractRutDoctor(text);
+  const pacienteTexto = extractPaciente(text);
+  const pacienteMatch = matchPaciente(text, pacienteTexto);
+  const sesiones = extractNumSesiones(text);
+  const detalle = sesiones ? `${sesiones} sesiones` : null;
+  const nombreArchivo = generarNombreDocumento("orden_kinesiologia", text, {fecha, prestador});
+  return {
+    tipoDocumento: "orden_kinesiologia",
+    tipoDocumentoLabel: DOC_TYPES.orden_kinesiologia,
+    confianza: 1,
+    fecha, monto: null,
+    paciente: pacienteTexto,
+    pacienteId: pacienteMatch ? pacienteMatch.id : "",
+    pacienteNombre: pacienteMatch ? pacienteMatch.nombre : null,
+    prestador, numeroBoleta: null, detalle, doctor, rutDoctor, tipoConsulta: "Kinesiología",
+    sesiones,
+    nombreArchivo
+  };
+}
+
+// BOLETAS (doctores, sesiones de kine, o medicamentos — siempre con monto propio): fecha, paciente,
+// N° de boleta, descripción, monto total, RUT del doctor o centro. Reutiliza toda la extracción de
+// classifyAndExtract (fechas con prioridad de etiqueta, especialidad, paciente, RUT, etc.) pero
+// fuerza el resultado a una de las 3 variantes "boleta_" — el usuario ya confirmó que es una boleta
+// pagada, así que nunca puede terminar clasificada como una orden/receta o un comprobante de isapre.
+function classifyBoletaOnly(text){
+  const g = classifyAndExtract(text);
+  const norm = normalizeText(text);
+  let tipo = g.tipoDocumento;
+  if(tipo === "orden_medicamentos") tipo = "boleta_medicamentos";
+  else if(tipo === "orden_examen") tipo = "boleta_examen";
+  else if(tipo === "orden_kinesiologia") tipo = "boleta_medica";
+  else if(tipo === "comprobante_isapre" || tipo === "otro"){
+    const scores = {
+      boleta_medicamentos: countMatches(norm, ["farmacia","salcobrand","cruz verde","ahumada","boleta electronica","liga chilena","medicamento"]),
+      boleta_examen: countMatches(norm, ["examen","laboratorio","imagenologia","radiografia","ecografia","resonancia magnetica","scanner","tomografia","biopsia","hemograma","perfil bioquimico","toma de muestra","informe de laboratorio"]),
+      boleta_medica: countMatches(norm, ["boleta de honorarios","consulta medica","honorarios medicos","atencion medica","psiquiatra","endocrinologia","medico psiquiatra","kinesiolog","atencion kinesiologica","psicolog","psicoterapia","sesion psicologica"]),
+    };
+    tipo = "boleta_medica"; let best = 0;
+    for(const [k,v] of Object.entries(scores)){ if(v > best){ best = v; tipo = k; } }
+  }
+  const resultado = (tipo === g.tipoDocumento) ? g : Object.assign({}, g, {
+    tipoDocumento: tipo,
+    tipoDocumentoLabel: DOC_TYPES[tipo],
+    nombreArchivo: generarNombreDocumento(tipo, text, {fecha:g.fecha, monto:g.monto, prestador:g.prestador, numeroBoleta:g.numeroBoleta})
+  });
+  return aplicarPrestadorKineConocido(resultado, text);
+}
+
+// PRESTADORES DE KINESIOLOGÍA CONOCIDOS: reconocidos automáticamente por nombre/RUT en el texto OCR,
+// de forma que las boletas de estos centros completen "Prestador" y "RUT del prestador" solos, y además
+// parseen las líneas de sesión (una por cada "Atención"/"Control") para contar sesiones y armar una
+// descripción resumen con tipo + fecha + hora + kinesiólogo de cada una.
+const PRESTADORES_KINE_CONOCIDOS = [
+  { claves: ["movikids","kinemed","76.246.306-7","762463067"], nombre: "MOVIKIDS", rut: "76.246.306-7" }
+];
+function detectarPrestadorKineConocido(text){
+  const norm = normalizeText(text);
+  for(const p of PRESTADORES_KINE_CONOCIDOS){
+    if(p.claves.some(k => norm.includes(normalizeText(k)))) return p;
+  }
+  return null;
+}
+// Boletas de estos centros pueden traer varias sesiones en una sola boleta, cada una en su propia línea
+// de la tabla "DESCRIPCIÓN": "Atención de Kinesiologia ..." o "Control de Kinesiologia ...", seguida de
+// fecha+hora, RUT y nombre del kinesiólogo. Cada línea = 1 sesión facturable (sea "Atención" o "Control").
+function extractSesionesKineBoleta(text){
+  const out = [];
+  for(const rawLine of text.split(/\n/)){
+    const m = rawLine.match(/(Atenci[oó]n|Control)[^\d]*?(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})(?::\d{2})?\s+\d{6,9}-[\dkK]\s+([A-Za-zÁÉÍÓÚÑñáéíóúñ.]+(?:\s+[A-Za-zÁÉÍÓÚÑñáéíóúñ.]+){1,3}?)\s+Kinesi[oó]log[oa]/i);
+    if(!m) continue;
+    out.push({
+      tipo: /^atenci/i.test(m[1]) ? "Atención" : "Control",
+      fecha: m[2],
+      hora: m[3],
+      kinesiologo: m[4].trim()
+    });
+  }
+  return out;
+}
+function generarDescripcionSesionesKine(sesiones){
+  return sesiones.map(s=>{
+    const etiqueta = s.tipo === "Atención" ? "atencion kine" : "control";
+    return `${etiqueta} ${s.fecha} ${s.hora} ${s.kinesiologo}`;
+  }).join(", ");
+}
+// Si la boleta es de kinesiología y el prestador coincide con uno conocido (ver arriba), completa
+// automáticamente "Prestador"/"RUT del prestador", cuenta las sesiones línea por línea y arma una
+// descripción resumen (que también reemplaza el nombre de archivo sugerido, que de otra forma tendría
+// prioridad sobre el detalle al precargar la descripción del formulario).
+function aplicarPrestadorKineConocido(g, text){
+  if(!g || g.tipoDocumento !== "boleta_medica" || !esKinesiologia(g.tipoConsulta)) return g;
+  const prestadorConocido = detectarPrestadorKineConocido(text);
+  if(!prestadorConocido) return g;
+  const sesiones = extractSesionesKineBoleta(text);
+  const descripcion = sesiones.length ? generarDescripcionSesionesKine(sesiones) : g.detalle;
+  return Object.assign({}, g, {
+    prestador: prestadorConocido.nombre,
+    rutPrestador: prestadorConocido.rut,
+    sesionesKine: sesiones,
+    cantidadSesiones: sesiones.length || null,
+    detalle: descripcion,
+    nombreArchivo: descripcion || g.nombreArchivo
+  });
+}
+
 /* ---------------- cola de subida automática ---------------- */
 let uploadQueue = [];
 let uploadQueueIndex = 0;
+// Qué eligió el usuario en el selector "¿Qué estás subiendo?" antes de elegir los archivos:
+// "receta" | "orden_kine" | "boleta" | "auto" (detección automática, como antes).
+let uploadQueueModo = "auto";
 
 async function processNextInQueue(){
   if(uploadQueueIndex >= uploadQueue.length){ uploadQueue = []; uploadQueueIndex = 0; return; }
@@ -1328,7 +1576,10 @@ async function processNextInQueue(){
   setAnalyzingText(`Analizando documento ${n} de ${total}...`);
   try{
     const { images, text } = await processFile(file);
-    const guess = classifyAndExtract(text);
+    const guess = uploadQueueModo === "receta" ? extractOrdenMedicamentosData(text)
+      : uploadQueueModo === "orden_kine" ? extractOrdenKineDataTyped(text)
+      : uploadQueueModo === "boleta" ? classifyBoletaOnly(text)
+      : aplicarPrestadorKineConocido(classifyAndExtract(text), text);
     showAnalyzingOverlay(false);
     openForm(null, { images, guess });
   }catch(err){
@@ -1416,9 +1667,13 @@ function renderGrid(){
 
     let recetaTagHtml = "";
     if(item.tipoDocumento === "orden_medicamentos"){
-      const venc = recetaVencimiento(item);
-      const vig = recetaVigente(item);
-      if(venc) recetaTagHtml = `<span class="doctype-badge ${vig?'low':'danger'}">${vig?('Vigente hasta '+fmtDate(venc)):'Receta vencida'}</span>`;
+      if(item.vigenciaTipo === "permanente"){
+        recetaTagHtml = `<span class="doctype-badge low">Vigencia permanente</span>`;
+      } else {
+        const venc = recetaVencimiento(item);
+        const vig = recetaVigente(item);
+        if(venc) recetaTagHtml = `<span class="doctype-badge ${vig?'low':'danger'}">${vig?('Vigente hasta '+fmtDate(venc)):'Receta vencida'}</span>`;
+      }
     } else if(item.tipoDocumento === "boleta_medicamentos" && !item.recetaId){
       recetaTagHtml = `<span class="doctype-badge warn">⚠️ sin receta</span>`;
     } else if(item.tipoDocumento === "boleta_medica" && esKinesiologia(item.tipoConsulta) && !item.recetaId){
@@ -1632,15 +1887,40 @@ function actualizarVisibilidadCampos(){
   const puedeSerOrden = esRemedioOExamen || esConsultaKine;
   const esOrden = puedeSerOrden && tipoRegistro === "orden";
   const tieneDocReferencia = categoria === "Remedios" || esConsultaKine;
+  // Una boleta de kinesiología puede traer varias sesiones con distinto profesional cada una (ver
+  // "Cantidad de sesiones" más abajo), así que ahí no tiene sentido un solo campo "Doctor" — se
+  // reemplaza por el prestador/RUT del centro y la cantidad de sesiones.
+  const esBoletaKine = esConsultaKine && tipoRegistro === "boleta";
 
   document.getElementById("subcategoriaField").style.display = esConsulta ? "" : "none";
   document.getElementById("tipoRegistroField").style.display = puedeSerOrden ? "" : "none";
   document.getElementById("recetaField").style.display = (tieneDocReferencia && tipoRegistro === "boleta") ? "" : "none";
+  // La vigencia editable solo aplica a las recetas de medicamentos (Remedios + orden) — las órdenes
+  // de kinesiología no tienen fecha de vencimiento (ver ordenesKineDisponibles).
+  document.getElementById("vigenciaField").style.display = (categoria === "Remedios" && tipoRegistro === "orden") ? "" : "none";
   document.getElementById("numBoletaField").style.display = esOrden ? "none" : "";
   document.getElementById("montoField").style.display = esOrden ? "none" : "";
   document.getElementById("directoSeguroField").style.display = esOrden ? "none" : "";
+  document.getElementById("rutPrestadorField").style.display = esBoletaKine ? "" : "none";
+  document.getElementById("cantidadSesionesField").style.display = esBoletaKine ? "" : "none";
+  document.getElementById("doctorField").style.display = esBoletaKine ? "none" : "";
+  document.getElementById("rutDoctorField").style.display = esBoletaKine ? "none" : "";
   poblarSelectReceta(document.getElementById("fPaciente").value, document.getElementById("fReceta").value);
+  actualizarVisibilidadVigenciaValor();
   renderRecetaHint();
+}
+// Muestra/oculta el campo numérico de vigencia personalizada ("meses"/"días") y ajusta su etiqueta
+// según lo elegido en el selector de vigencia.
+function actualizarVisibilidadVigenciaValor(){
+  const tipo = document.getElementById("fVigenciaTipo").value;
+  const campo = document.getElementById("vigenciaValorField");
+  const label = document.getElementById("vigenciaValorLabel");
+  if(tipo === "meses" || tipo === "dias"){
+    campo.style.display = "";
+    label.textContent = tipo === "meses" ? "Meses" : "Días";
+  } else {
+    campo.style.display = "none";
+  }
 }
 function openForm(item, autofill){
   editingId = item ? item.id : null;
@@ -1667,10 +1947,17 @@ function openForm(item, autofill){
       : (nombreSugerido || (g && (g.detalle || g.tipoDocumentoLabel)) || ""));
   document.getElementById("fPrestador").value = item ? item.prestador : ((g && g.prestador) || "");
   document.getElementById("fBoleta").value = item ? item.numeroBoleta : ((g && g.numeroBoleta) || "");
+  document.getElementById("fRutPrestador").value = item ? (item.rutPrestador||"") : ((g && g.rutPrestador) || "");
+  document.getElementById("fCantidadSesiones").value = item ? (item.cantidadSesiones||"") : ((g && g.cantidadSesiones) || "");
   document.getElementById("fDoctor").value = item ? (item.doctor||"") : ((g && g.doctor) || "");
   document.getElementById("fRutDoctor").value = item ? (item.rutDoctor||"") : ((g && g.rutDoctor) || "");
   document.getElementById("fTipoConsulta").value = item ? (item.tipoConsulta||"") : ((g && g.tipoConsulta) || "");
   document.getElementById("fMonto").value = item ? item.monto : ((g && g.monto) || "");
+  // Vigencia de la receta: si se está editando, usa lo guardado; si es nueva y el OCR detectó una
+  // vigencia explícita en el texto (ver extractVigenciaTexto), la sugiere; si no, queda "por defecto".
+  const vigenciaDetectada = (!item && g && g.vigencia) ? g.vigencia : null;
+  document.getElementById("fVigenciaTipo").value = item ? (item.vigenciaTipo || "") : (vigenciaDetectada ? vigenciaDetectada.tipo : "");
+  document.getElementById("fVigenciaValor").value = item ? (item.vigenciaValor || "") : (vigenciaDetectada ? (vigenciaDetectada.valor || "") : "");
   const pacienteSeleccionado = item ? (item.paciente || "") : ((g && g.pacienteId) || "");
   document.getElementById("fPaciente").value = pacienteSeleccionado;
   // Si es una boleta de medicamentos (o de kinesiología) detectada por OCR y sabemos el paciente,
@@ -1771,17 +2058,22 @@ function openDetail(id){
 
   let recetaInfoHtml = "";
   if(item.tipoDocumento === "orden_medicamentos"){
-    const venc = recetaVencimiento(item);
-    const vig = recetaVigente(item);
-    if(venc){
-      recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;">Vigencia de la receta: <b style="${vig?"":"color:var(--red);"}">${vig ? ("Vigente hasta "+fmtDate(venc)) : ("Vencida desde "+fmtDate(venc))}</b></div>`;
+    if(item.vigenciaTipo === "permanente"){
+      recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;">Vigencia de la receta: <b>Permanente (sin vencimiento)</b></div>`;
+    } else {
+      const venc = recetaVencimiento(item);
+      const vig = recetaVigente(item);
+      if(venc){
+        recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;">Vigencia de la receta: <b style="${vig?"":"color:var(--red);"}">${vig ? ("Vigente hasta "+fmtDate(venc)) : ("Vencida desde "+fmtDate(venc))}</b></div>`;
+      }
     }
   } else if(item.tipoDocumento === "boleta_medicamentos"){
     const receta = item.recetaId ? items.find(i=>i.id===item.recetaId) : null;
     if(receta){
       const venc = recetaVencimiento(receta);
       const vig = recetaVigente(receta);
-      recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;">Receta vinculada: <b>${escapeHtml(receta.descripcion||"Receta")}</b>${venc?(vig ? (" — vigente hasta "+fmtDate(venc)) : (` — <span style="color:var(--red);">⚠️ vencida desde ${fmtDate(venc)}</span>`)):""}</div>`;
+      const vencTxt = receta.vigenciaTipo === "permanente" ? " — vigencia permanente" : (venc?(vig ? (" — vigente hasta "+fmtDate(venc)) : (` — <span style="color:var(--red);">⚠️ vencida desde ${fmtDate(venc)}</span>`)):"");
+      recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;">Receta vinculada: <b>${escapeHtml(receta.descripcion||"Receta")}</b>${vencTxt}</div>`;
     } else {
       recetaInfoHtml = `<div class="meta" style="margin-bottom:4px;color:var(--amber);">⚠️ Esta compra no tiene una receta vinculada.</div>`;
     }
@@ -2155,6 +2447,7 @@ function ensureTokenClient(silent){
         }catch(e){ gUserEmail = null; }
         refreshDriveStatusUI();
         toast("Conectado a Google Drive ✅");
+        maybeAutoSyncDrive(); // organiza en Drive lo que ya tenías guardado, no solo lo nuevo
       }
     });
     gTokenClient._cid = clientId;
@@ -2236,11 +2529,159 @@ function maybeAutoBackup(){
   autoBackupTimer = setTimeout(()=>{ uploadBackupToDrive(true); }, 1500);
 }
 
+/* ---------------- organización automática de documentos en Google Drive ---------------- */
+// Estructura en Drive: "REEMBOLSOS WEB" (carpeta raíz) → "ordenes kine y recetas" (todas las
+// recetas de medicamentos y órdenes de kinesiología juntas) y una carpeta por cada boleta (con el
+// N° de boleta como nombre), que contiene la boleta y una copia de la orden/receta que la respalda.
+const DRIVE_FOLDER_RAIZ = "REEMBOLSOS WEB";
+const DRIVE_FOLDER_ORDENES = "ordenes kine y recetas";
+
+// Busca (y cachea en localStorage, para no tener que buscar cada vez) el id de una carpeta por
+// nombre dentro de un padre dado; si no existe, la crea. Con el scope drive.file, la búsqueda solo
+// encuentra carpetas que esta misma app haya creado antes — por eso el caché es solo un atajo, no
+// la única fuente de verdad: si se pierde (otro navegador, caché borrado), igual la vuelve a encontrar.
+async function ensureDriveFolder(name, parentId){
+  const cacheKey = `gdrive_folder_${parentId||"root"}_${name}`;
+  const cached = localStorage.getItem(cacheKey);
+  if(cached) return cached;
+  const parentClause = parentId ? ` and '${parentId}' in parents` : "";
+  const q = encodeURIComponent(`name='${name.replace(/'/g,"\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentClause}`);
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
+    headers:{Authorization:"Bearer "+gAccessToken}
+  });
+  if(!r.ok) throw new Error("No se pudo consultar carpetas de Google Drive (¿el permiso expiró? intenta reconectar).");
+  const data = await r.json();
+  if(data.files && data.files[0]){
+    localStorage.setItem(cacheKey, data.files[0].id);
+    return data.files[0].id;
+  }
+  const metadata = { name, mimeType: "application/vnd.google-apps.folder" };
+  if(parentId) metadata.parents = [parentId];
+  const cr = await fetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers:{ Authorization:"Bearer "+gAccessToken, "Content-Type":"application/json" },
+    body: JSON.stringify(metadata)
+  });
+  if(!cr.ok){ const t = await cr.text(); throw new Error(t); }
+  const created = await cr.json();
+  localStorage.setItem(cacheKey, created.id);
+  return created.id;
+}
+
+// Sube una foto (dataUrl JPEG) como archivo nuevo dentro de una carpeta de Drive y devuelve su id.
+async function uploadImageToDrive(filename, dataUrl, folderId){
+  const blob = await (await fetch(dataUrl)).blob();
+  const metaR = await fetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers:{ Authorization:"Bearer "+gAccessToken, "Content-Type":"application/json" },
+    body: JSON.stringify({ name: filename, parents:[folderId] })
+  });
+  if(!metaR.ok){ const t = await metaR.text(); throw new Error(t); }
+  const meta = await metaR.json();
+  const upR = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${meta.id}?uploadType=media`, {
+    method: "PATCH",
+    headers:{ Authorization:"Bearer "+gAccessToken, "Content-Type": blob.type || "image/jpeg" },
+    body: blob
+  });
+  if(!upR.ok){ const t = await upR.text(); throw new Error(t); }
+  return meta.id;
+}
+
+// Copia un archivo ya subido a Drive (por su id) dentro de otra carpeta, sin volver a subir los
+// bytes de la imagen — se usa para poner la orden/receta vinculada también dentro de la carpeta de
+// la boleta, sin duplicar el trabajo de subida.
+async function copyDriveFile(fileId, folderId, name){
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/copy`, {
+    method: "POST",
+    headers:{ Authorization:"Bearer "+gAccessToken, "Content-Type":"application/json" },
+    body: JSON.stringify({ name, parents:[folderId] })
+  });
+  if(!r.ok){ const t = await r.text(); throw new Error(t); }
+}
+
+// Sube a una carpeta de Drive las fotos de un item que todavía no tengan driveFileId (evita volver
+// a subir lo que ya se subió antes). Devuelve true si subió algo nuevo (para saber si hay que
+// guardar el item con los driveFileId actualizados).
+async function syncFotosToFolder(item, folderId){
+  let changed = false;
+  const fotos = item.fotos || [];
+  for(let i=0; i<fotos.length; i++){
+    const foto = fotos[i];
+    if(foto.driveFileId) continue;
+    const base = item.descripcion || DOC_TYPES[item.tipoDocumento] || "documento";
+    const filename = `${base}${fotos.length>1 ? " ("+(i+1)+")" : ""}.jpg`;
+    foto.driveFileId = await uploadImageToDrive(filename, foto.dataUrl, folderId);
+    foto.driveFileName = filename;
+    changed = true;
+  }
+  return changed;
+}
+
+// Recorre todos los items y organiza en Drive lo que todavía falte: sube las órdenes/recetas a su
+// carpeta compartida, y para cada boleta crea (si hace falta) su carpeta con el N° de boleta, sube
+// sus fotos, y copia ahí la orden/receta vinculada (si tiene una y ya está subida — si no, la sube
+// primero). Es idempotente: se puede llamar varias veces sin duplicar nada, porque se salta
+// cualquier foto que ya tenga driveFileId y cualquier boleta cuya orden vinculada ya se copió.
+async function syncPendingItemsToDrive(){
+  if(!gAccessToken) return;
+  try{
+    const rootId = await ensureDriveFolder(DRIVE_FOLDER_RAIZ, null);
+    const ordenesFolderId = await ensureDriveFolder(DRIVE_FOLDER_ORDENES, rootId);
+    let anyChanged = false;
+    for(const item of items){
+      const esOrdenReferencia = item.tipoDocumento === "orden_medicamentos" || item.tipoDocumento === "orden_kinesiologia";
+      if(esOrdenReferencia){
+        const changed = await syncFotosToFolder(item, ordenesFolderId);
+        if(changed){ await dbPut(item); anyChanged = true; }
+        continue;
+      }
+      if(esDocumentoReferencia(item)) continue; // comprobante isapre / otro: no se organiza en Drive
+      const necesitaSubirFotos = (item.fotos||[]).some(f=>!f.driveFileId) && (item.fotos||[]).length>0;
+      const necesitaCopiarOrden = !!item.recetaId && item.driveOrdenCopiada !== item.recetaId;
+      if(!necesitaSubirFotos && !necesitaCopiarOrden) continue;
+      const nombreCarpeta = String(item.numeroBoleta || item.descripcion || item.id).trim();
+      const boletaFolderId = await ensureDriveFolder(nombreCarpeta, rootId);
+      const fotosChanged = await syncFotosToFolder(item, boletaFolderId);
+      if(fotosChanged) anyChanged = true;
+      if(necesitaCopiarOrden){
+        const orden = items.find(i=>i.id===item.recetaId);
+        if(orden){
+          if((orden.fotos||[]).some(f=>!f.driveFileId)){
+            const ordenChanged = await syncFotosToFolder(orden, ordenesFolderId);
+            if(ordenChanged) await dbPut(orden);
+          }
+          for(const foto of (orden.fotos||[])){
+            if(foto.driveFileId){
+              await copyDriveFile(foto.driveFileId, boletaFolderId, foto.driveFileName || ((orden.descripcion||"orden")+".jpg"));
+            }
+          }
+        }
+        item.driveOrdenCopiada = item.recetaId;
+      }
+      if(fotosChanged || necesitaCopiarOrden){ await dbPut(item); anyChanged = true; }
+    }
+    if(anyChanged) toast("☁️ Documentos organizados en Google Drive");
+  }catch(err){
+    console.error("Error organizando en Google Drive", err);
+    toast("⚠️ No se pudo organizar en Google Drive: " + err.message);
+  }
+}
+
+let driveSyncTimer = null;
+// Se llama después de cada guardado (igual que maybeAutoBackup) — si Drive está conectado, organiza
+// en segundo plano lo que haga falta, sin bloquear el guardado ni el cierre del formulario.
+function maybeAutoSyncDrive(){
+  if(!gAccessToken) return;
+  clearTimeout(driveSyncTimer);
+  driveSyncTimer = setTimeout(()=>{ syncPendingItemsToDrive(); }, 1500);
+}
+
 /* ---------------- load / init ---------------- */
 async function loadItems(){
   items = (await dbGetAll()).map(migrateItem);
   renderAll();
   maybeAutoBackup();
+  maybeAutoSyncDrive();
 }
 
 function checkStorage(){
@@ -2314,7 +2755,16 @@ async function init(){
   }
 
   document.getElementById("btnNew").addEventListener("click", ()=>openForm(null));
-  document.getElementById("btnAutoUpload").addEventListener("click", ()=>document.getElementById("autoUploadInput").click());
+  document.getElementById("btnAutoUpload").addEventListener("click", ()=>document.getElementById("tipoDocOverlay").classList.add("show"));
+  document.getElementById("btnTipoDocCancelar").addEventListener("click", ()=>document.getElementById("tipoDocOverlay").classList.remove("show"));
+  document.getElementById("tipoDocOverlay").addEventListener("click", (e)=>{ if(e.target.id==="tipoDocOverlay") document.getElementById("tipoDocOverlay").classList.remove("show"); });
+  document.querySelectorAll(".tipo-doc-choice").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      uploadQueueModo = btn.dataset.modo;
+      document.getElementById("tipoDocOverlay").classList.remove("show");
+      document.getElementById("autoUploadInput").click();
+    });
+  });
   document.getElementById("autoUploadInput").addEventListener("change", (e)=>{
     const files = Array.from(e.target.files);
     e.target.value = "";
@@ -2342,6 +2792,7 @@ async function init(){
     renderRecetaHint();
   });
   document.getElementById("fReceta").addEventListener("change", renderRecetaHint);
+  document.getElementById("fVigenciaTipo").addEventListener("change", actualizarVisibilidadVigenciaValor);
   document.getElementById("dropZone").addEventListener("click", ()=>document.getElementById("fFotos").click());
   document.getElementById("fFotos").addEventListener("change", (e)=>handleFiles(e.target.files));
 
@@ -2361,6 +2812,8 @@ async function init(){
       descripcion: document.getElementById("fDescripcion").value.trim(),
       prestador: document.getElementById("fPrestador").value.trim(),
       numeroBoleta: document.getElementById("fBoleta").value.trim(),
+      rutPrestador: document.getElementById("fRutPrestador").value.trim(),
+      cantidadSesiones: document.getElementById("fCantidadSesiones").value ? Number(document.getElementById("fCantidadSesiones").value) : null,
       doctor: document.getElementById("fDoctor").value.trim(),
       rutDoctor: document.getElementById("fRutDoctor").value.trim(),
       tipoConsulta: document.getElementById("fTipoConsulta").value.trim(),
@@ -2368,6 +2821,8 @@ async function init(){
       requiereIsapre: !document.getElementById("fDirectoSeguro").checked,
       paciente: document.getElementById("fPaciente").value,
       recetaId: document.getElementById("fReceta").value,
+      vigenciaTipo: document.getElementById("fVigenciaTipo").value,
+      vigenciaValor: document.getElementById("fVigenciaValor").value ? Number(document.getElementById("fVigenciaValor").value) : null,
       fotos: pendingFotos,
       tipoDocumento: tipoDocumentoFinal || null,
       historial: [],
