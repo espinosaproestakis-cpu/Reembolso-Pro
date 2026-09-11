@@ -268,6 +268,13 @@
     <form id="prestacionForm">
       <input type="hidden" id="fId">
       <div id="docTypeHint" class="banner" style="display:none;margin-bottom:14px;"></div>
+      <div class="field">
+        <label>Prestador conocido (opcional)</label>
+        <select id="fPrestadorConocido">
+          <option value="">— Elegir de la lista, o completar a mano —</option>
+        </select>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">Si eliges uno, completo categoría, especialidad y prestador/doctor + RUT por ti — puedes corregir cualquier campo después.</div>
+      </div>
       <div class="row2">
         <div class="field">
           <label>Fecha de la prestación</label>
@@ -1005,24 +1012,31 @@ function matchPaciente(fullText, pacienteLabelText){
   return matchPacienteByNombre(pacienteLabelText) || matchPacienteByRut(fullText) || matchPacienteByNombre(fullText);
 }
 
-// Doctores/profesionales conocidos — igual que PACIENTES, es una lista chica que tú vas llenando
-// a mano (pídemelo cuando quieras agregar uno) con el nombre corto exacto que quieres ver en la
-// columna "Doctor" de Órdenes, incluyendo el título (Dra./Dr.) cuando corresponda: a veces la boleta
-// no trae el título de forma explícita (ej. "Rosario Andrea Alomar Araya", sin "Dra." en el texto),
-// así que para esos casos conocidos no hay que adivinar el género — solo se busca por RUT.
-const DOCTORES_CONOCIDOS = [
-  { rut:"8719989-4", corto:"Dra. Heather" },
-  { rut:"10691455-9", corto:"Dra. Rosario" },
-  { rut:"7047282-1", corto:"Maria Elisa" }
+// Prestadores conocidos — igual que PACIENTES, es una lista chica que tú vas llenando a mano
+// (pídemelo cuando quieras agregar uno) con los datos exactos de cada clínica/doctor que uses
+// seguido: nombre corto para las tablas (con título, Dra./Dr., cuando corresponda — a veces la
+// boleta no lo trae explícito, ej. "Rosario Andrea Alomar Araya" sin "Dra." en el texto, así que
+// para estos casos conocidos no hay que adivinar el género), RUT, nombre completo (el que se guarda
+// en la prestación), y la categoría/subcategoría que le corresponde. Sirve para dos cosas: (1) el
+// selector "Prestador conocido" del formulario, que completa todos esos campos de una — ver
+// poblarSelectPrestadorConocido/aplicarPrestadorConocidoAlForm; y (2) acortar el nombre en la
+// columna "Doctor" de Órdenes (ver nombreDoctorCorto), aunque solo aplica a las entradas tipo:"doctor".
+// tipo "prestador" = empresa/clínica (va en los campos Prestador/RUT del prestador); tipo "doctor" =
+// profesional individual (va en los campos Doctor/RUT del doctor).
+const PRESTADORES_CONOCIDOS = [
+  { id:"movikids", tipo:"prestador", corto:"Movikids", nombreCompleto:"MOVIKIDS", rut:"76246306-7", categoria:"Consultas", subcategoria:"Kinesiología" },
+  { id:"maria-elisa", tipo:"doctor", corto:"Maria Elisa", nombreCompleto:"Maria Elisa Molina Pavez", rut:"7047282-1", categoria:"Consultas", subcategoria:"Psicología" },
+  { id:"dra-rosario", tipo:"doctor", corto:"Dra. Rosario", nombreCompleto:"Rosario Andrea Alomar Araya", rut:"10691455-9", categoria:"Consultas", subcategoria:"Psiquiatría" },
+  { id:"dra-heather", tipo:"doctor", corto:"Dra. Heather", nombreCompleto:"Heather Strain Henkes", rut:"8719989-4", categoria:"Consultas", subcategoria:"Pediatría" }
 ];
 function doctorCortoConocido(rutDoctor){
   if(!rutDoctor) return null;
   const norm = normalizeRut(rutDoctor);
   if(!norm) return null;
-  const d = DOCTORES_CONOCIDOS.find(d=>normalizeRut(d.rut)===norm);
-  return d ? d.corto : null;
+  const p = PRESTADORES_CONOCIDOS.find(p=>normalizeRut(p.rut)===norm);
+  return p ? p.corto : null;
 }
-// Nombre corto del doctor para mostrar en tablas: si el RUT está en DOCTORES_CONOCIDOS, usa ese
+// Nombre corto del doctor para mostrar en tablas: si el RUT está en PRESTADORES_CONOCIDOS, usa ese
 // nombre curado (con título). Si no, arma uno automático a partir del campo "Doctor" tal como esté
 // escrito: título (Dr./Dra., solo si ya viene en el texto) + la primera palabra del nombre — sin
 // inventar un título que el texto no traiga.
@@ -1038,6 +1052,34 @@ function nombreDoctorCorto(item){
     return primeraPalabra ? `${titulo} ${primeraPalabra}` : titulo;
   }
   return doc.split(/\s+/)[0] || "";
+}
+// Rellena el selector "Prestador conocido" del formulario con la lista de arriba.
+function poblarSelectPrestadorConocido(){
+  const sel = document.getElementById("fPrestadorConocido");
+  if(!sel) return;
+  const opciones = PRESTADORES_CONOCIDOS.map(p=>
+    `<option value="${p.id}">${escapeHtml(p.corto)} (${p.rut}) — ${escapeHtml(p.subcategoria)}</option>`
+  ).join("");
+  sel.innerHTML = `<option value="">— Elegir de la lista, o completar a mano —</option>` + opciones;
+}
+// Al elegir un prestador conocido, completa categoría, subcategoría y prestador/doctor + RUT
+// (según corresponda) — el resto del formulario (fecha, monto, fotos, etc.) se sigue llenando igual.
+function aplicarPrestadorConocidoAlForm(id){
+  const p = PRESTADORES_CONOCIDOS.find(p=>p.id===id);
+  if(!p) return;
+  document.getElementById("fCategoria").value = p.categoria;
+  document.getElementById("fTipoConsulta").value = p.subcategoria || "";
+  if(p.tipo === "prestador"){
+    document.getElementById("fPrestador").value = p.nombreCompleto;
+    document.getElementById("fRutPrestador").value = p.rut;
+  } else {
+    document.getElementById("fDoctor").value = p.nombreCompleto;
+    document.getElementById("fRutDoctor").value = p.rut;
+  }
+  if(!editingId){ document.getElementById("fDirectoSeguro").checked = p.categoria === "Remedios"; }
+  actualizarVisibilidadCampos();
+  poblarSelectReceta(document.getElementById("fPaciente").value, document.getElementById("fReceta").value);
+  renderRecetaHint();
 }
 
 function setAnalyzingText(msg){
@@ -1805,7 +1847,7 @@ const TIPO_ORDEN_LABEL = {
   orden_examen: "Examen",
   comprobante_isapre: "Comprobante isapre",
 };
-// Nombre corto del doctor (ver nombreDoctorCorto — usa DOCTORES_CONOCIDOS si el RUT está en la
+// Nombre corto del doctor (ver nombreDoctorCorto — usa PRESTADORES_CONOCIDOS si el RUT está en la
 // lista) junto a su RUT sin puntos, ej. "Dra. Heather (8719989-4)".
 function doctorConRutParaTabla(item){
   const doc = nombreDoctorCorto(item);
@@ -2234,6 +2276,10 @@ function openForm(item, autofill){
 
   document.getElementById("formTitle").textContent = item ? "Editar prestación" : "Nueva prestación";
   document.getElementById("fId").value = item ? item.id : "";
+  // El selector "Prestador conocido" siempre arranca vacío (nunca queda "seleccionado" a partir de
+  // datos ya guardados) para no sobrescribir por accidente lo que ya haya en el formulario.
+  const fPrestadorConocidoEl = document.getElementById("fPrestadorConocido");
+  if(fPrestadorConocidoEl) fPrestadorConocidoEl.value = "";
   document.getElementById("fFecha").value = item ? item.fecha : ((g && g.fecha) || new Date().toISOString().slice(0,10));
   const categoria = item ? item.categoria : ((g && CATEGORY_BY_DOCTYPE[g.tipoDocumento]) || "Otros");
   document.getElementById("fCategoria").value = categoria;
@@ -3066,6 +3112,7 @@ async function init(){
   checkStorage();
   poblarSelectsPacientes();
   poblarDatalistSubcategoria();
+  poblarSelectPrestadorConocido();
   try{
     db = await openDB();
     await loadItems();
@@ -3102,6 +3149,9 @@ async function init(){
   document.getElementById("fCategoria").addEventListener("change", (e)=>{
     if(!editingId){ document.getElementById("fDirectoSeguro").checked = e.target.value === "Remedios"; }
     actualizarVisibilidadCampos();
+  });
+  document.getElementById("fPrestadorConocido").addEventListener("change", (e)=>{
+    if(e.target.value) aplicarPrestadorConocidoAlForm(e.target.value);
   });
   document.getElementById("fTipoRegistro").addEventListener("change", actualizarVisibilidadCampos);
   // Mientras el usuario escribe la subcategoría (ej. "Kinesiología"), va mostrando/ocultando en vivo
@@ -3237,3 +3287,4 @@ init();
 </script>
 </body>
 </html>
+
