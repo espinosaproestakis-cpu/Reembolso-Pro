@@ -1154,7 +1154,10 @@ function extractNumeroBoleta(text){
   const raw = extractLabeled(text, [
     "boleta\\s*(?:exenta\\s*)?electr[oó]nica\\s*(?:nro\\.?|n[uú]mero)",
     "folio\\s*:?",
-    "n\\s*[°º]\\s*",
+    // El símbolo "N°"/"Nº" es chico y suele venir en negrita/color en el original, así que el OCR
+    // a veces no lo reconoce como "°"/"º" y lo confunde con una comilla u otro carácter parecido
+    // (ej. lee N": 86320" en vez de "N°: 86320") — se aceptan esas variantes también.
+    "n\\s*[°º\"'`]\\s*",
   ], ["fecha","valido","rut","nro\\.\\s*pam"]);
   if(!raw) return null;
   const m = raw.match(/^[\w.\-\/]+/);
@@ -1560,28 +1563,46 @@ function detectarPrestadorKineConocido(text){
   }
   return null;
 }
-// Boletas de estos centros pueden traer varias sesiones en una sola boleta, cada una en su propia línea
-// de la tabla "DESCRIPCIÓN": "Atención de Kinesiologia ..." o "Control de Kinesiologia ...", seguida de
-// fecha+hora, RUT y nombre del kinesiólogo. Cada línea = 1 sesión facturable (sea "Atención" o "Control").
+// Boletas de estos centros pueden traer varias sesiones en una sola boleta, cada una en su propia fila
+// de la tabla "DESCRIPCIÓN": "Atención Kinesiológica..." o "Control de Kinesiología...", seguida de
+// fecha+hora, RUT y nombre del kinesiólogo, y luego las columnas UNID./CANT./PRECIO/TOTAL.
+//
+// Esto NO se puede leer con una sola expresión regular por fila de texto: cuando el OCR lee una foto
+// (no un PDF con texto), el orden y los saltos de línea de estas columnas salen distintos según cuánto
+// texto tenga cada fila — a veces el RUT+nombre del profesional queda pegado justo después de la hora
+// (antes de CANT./PRECIO/TOTAL), y otras veces el OCR los deja DESPUÉS de esas columnas, con el sufijo
+// "Kinesiólogo/a" incluso solo en la línea siguiente. Por eso el enfoque es: 1) ubicar todas las
+// fechas+horas del texto (son el ancla más confiable — no hay otro dato con ese formato en la boleta,
+// y el OCR casi no las confunde), 2) para cada una, mirar el texto justo ANTES para saber si es
+// "Atención" o "Control" (tolerando que el OCR recorte el "At" inicial, ej. "...0601105 encion
+// Kinesiologica..."), y 3) mirar el texto justo DESPUÉS (sin asumir un orden fijo) para encontrar el
+// primer RUT y capturar el nombre que le sigue, sin importar qué haya entre medio.
 function extractSesionesKineBoleta(text){
+  const flat = text.replace(/\s+/g, " ");
+  const dtRe = /(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})(?::\d{2})?/g;
+  const anclas = [];
+  let m;
+  while((m = dtRe.exec(flat))){
+    anclas.push({ fecha: m[1], hora: m[2], inicio: m.index, fin: m.index + m[0].length });
+  }
   const out = [];
-  for(const rawLine of text.split(/\n/)){
-    const m = rawLine.match(/(Atenci[oó]n|Control)[^\d]*?(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})(?::\d{2})?\s+\d{6,9}-[\dkK]\s+([A-Za-zÁÉÍÓÚÑñáéíóúñ.]+(?:\s+[A-Za-zÁÉÍÓÚÑñáéíóúñ.]+){1,3}?)\s+Kinesi[oó]log[oa]/i);
-    if(!m) continue;
-    out.push({
-      tipo: /^atenci/i.test(m[1]) ? "Atención" : "Control",
-      fecha: m[2],
-      hora: m[3],
-      kinesiologo: m[4].trim()
-    });
+  for(let i=0; i<anclas.length; i++){
+    const ancla = anclas[i];
+    const antes = flat.slice(Math.max(0, ancla.inicio - 80), ancla.inicio);
+    let tipo = null;
+    if(/control/i.test(antes)) tipo = "Control";
+    else if(/atenci[oó]n|tencion|encion/i.test(antes)) tipo = "Atencion";
+    if(!tipo) continue; // esta fecha/hora no corresponde a una fila de sesión reconocible — se ignora
+
+    const finVentana = (i+1 < anclas.length) ? anclas[i+1].inicio : Math.min(flat.length, ancla.fin + 200);
+    const despues = flat.slice(ancla.fin, finVentana);
+    const nm = despues.match(/\d{6,9}-[\dkK]\s+([A-Za-zÁÉÍÓÚÑñáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑñáéíóúñ]+){0,3}?)(?=\s+(?:\d|Kine\S*|$))/i);
+    out.push({ tipo, fecha: ancla.fecha, hora: ancla.hora, kinesiologo: nm ? nm[1].trim() : "" });
   }
   return out;
 }
 function generarDescripcionSesionesKine(sesiones){
-  return sesiones.map(s=>{
-    const etiqueta = s.tipo === "Atención" ? "atencion kine" : "control";
-    return `${etiqueta} ${s.fecha} ${s.hora} ${s.kinesiologo}`;
-  }).join(", ");
+  return sesiones.map(s => `${s.tipo} ${s.fecha} ${s.hora} ${s.kinesiologo}`.trim()).join(", ");
 }
 // Si la boleta es de kinesiología y el prestador coincide con uno conocido (ver arriba), completa
 // automáticamente "Prestador"/"RUT del prestador", cuenta las sesiones línea por línea y arma una
@@ -3064,3 +3085,4 @@ init();
 </script>
 </body>
 </html>
+
