@@ -466,13 +466,13 @@
 <!-- Overlay: elegir qué tipo de documento se va a subir -->
 <div class="overlay" id="tipoDocOverlay">
   <div class="modal" style="max-width:420px;">
-    <h2>📄 ¿Qué estás subiendo?</h2>
+    <h2>¿Qué estás subiendo?</h2>
     <p style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-top:0;">Elige el tipo de documento para que la app sepa exactamente qué datos buscar.</p>
     <div style="display:flex;flex-direction:column;gap:8px;margin:14px 0;">
-      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="receta" style="text-align:left;">💊 Receta médica<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">Medicamentos, dosis y vigencia</span></button>
-      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="orden_kine" style="text-align:left;">🦵 Orden de kinesiología<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">Doctor, paciente y N° de sesiones</span></button>
-      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="boleta" style="text-align:left;">🧾 Boleta<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">De doctor, sesión de kine o medicamentos — con monto pagado</span></button>
-      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="auto" style="text-align:left;">🔍 Otro / no estoy seguro<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">Detección automática (comprobante isapre, etc.)</span></button>
+      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="boleta" style="text-align:left;">Boleta<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">De doctor, sesión de kine o medicamentos — con monto pagado</span></button>
+      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="comprobante_isapre" style="text-align:left;">Comprobante reembolso isapre<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">Lo que te entrega la isapre al aprobar una boleta</span></button>
+      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="orden_medicamentos" style="text-align:left;">Orden medicamentos<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">Receta médica — medicamentos, dosis y vigencia</span></button>
+      <button type="button" class="btn-secondary tipo-doc-choice" data-modo="orden_kine" style="text-align:left;">Orden Kine<br><span style="font-size:11.5px;color:var(--muted);font-weight:400;">Doctor, paciente y N° de sesiones</span></button>
     </div>
     <div class="actions">
       <button type="button" class="btn-ghost" id="btnTipoDocCancelar">Cancelar</button>
@@ -1639,6 +1639,29 @@ function extractOrdenKineDataTyped(text){
   };
 }
 
+// COMPROBANTE DE REEMBOLSO ISAPRE: fecha, paciente, N° de reembolso/solicitud, isapre y monto
+// bonificado — es un documento de referencia (sin "boleta" propia), igual que las órdenes/recetas.
+function extractComprobanteIsapreDataTyped(text){
+  const fecha = extractFecha(text);
+  const pacienteTexto = extractPaciente(text);
+  const pacienteMatch = matchPaciente(text, pacienteTexto);
+  const numeroBoleta = extractNumeroReembolso(text);
+  const detalle = extractDetalle(text, "comprobante_isapre");
+  const monto = extractMonto(text);
+  const nombreArchivo = generarNombreDocumento("comprobante_isapre", text, {fecha, monto, numeroBoleta});
+  return {
+    tipoDocumento: "comprobante_isapre",
+    tipoDocumentoLabel: DOC_TYPES.comprobante_isapre,
+    confianza: 1,
+    fecha, monto,
+    paciente: pacienteTexto,
+    pacienteId: pacienteMatch ? pacienteMatch.id : "",
+    pacienteNombre: pacienteMatch ? pacienteMatch.nombre : null,
+    prestador: null, numeroBoleta, detalle, doctor: null, rutDoctor: null, tipoConsulta: null,
+    nombreArchivo
+  };
+}
+
 // BOLETAS (doctores, sesiones de kine, o medicamentos — siempre con monto propio): fecha, paciente,
 // N° de boleta, descripción, monto total, RUT del doctor o centro. Reutiliza toda la extracción de
 // classifyAndExtract (fechas con prioridad de etiqueta, especialidad, paciente, RUT, etc.) pero
@@ -1747,7 +1770,8 @@ function aplicarPrestadorKineConocido(g, text){
 let uploadQueue = [];
 let uploadQueueIndex = 0;
 // Qué eligió el usuario en el selector "¿Qué estás subiendo?" antes de elegir los archivos:
-// "receta" | "orden_kine" | "boleta" | "auto" (detección automática, como antes).
+// "boleta" | "comprobante_isapre" | "orden_medicamentos" | "orden_kine" | "auto" (este último ya no
+// tiene botón propio en el diálogo "¿Qué estás subiendo?", pero se deja como resguardo por defecto).
 let uploadQueueModo = "auto";
 
 async function processNextInQueue(){
@@ -1760,9 +1784,10 @@ async function processNextInQueue(){
   setAnalyzingText(`Analizando documento ${n} de ${total}...`);
   try{
     const { images, text } = await processFile(file);
-    const guess = uploadQueueModo === "receta" ? extractOrdenMedicamentosData(text)
+    const guess = uploadQueueModo === "orden_medicamentos" ? extractOrdenMedicamentosData(text)
       : uploadQueueModo === "orden_kine" ? extractOrdenKineDataTyped(text)
       : uploadQueueModo === "boleta" ? classifyBoletaOnly(text)
+      : uploadQueueModo === "comprobante_isapre" ? extractComprobanteIsapreDataTyped(text)
       : aplicarPrestadorKineConocido(classifyAndExtract(text), text);
     showAnalyzingOverlay(false);
     openForm(null, { images, guess });
@@ -3287,4 +3312,3 @@ init();
 </script>
 </body>
 </html>
-
